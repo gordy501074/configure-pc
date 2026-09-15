@@ -9,3 +9,9 @@ db/confi.db
 db/confi.db-wal
 db/confi.db-shm
 db/backups/
+test-results/
+playwright-report/
+.test-data/
+tests/drafts/*
+!tests/drafts/.gitkeep
+quarantine-part.log

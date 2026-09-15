@@ -1,0 +1,132 @@
+// Test-support module: create a fresh throwaway SQLite DB (schema + seed) for
+// isolated Playwright runs, plus shared constants for config/CI.
+
+import Database from "better-sqlite3";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { components, readyPcs } from "../../src/data/mock.ts";
+
+const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
+
+export const TEST_DB_PATH = process.env.TEST_DB_PATH ?? join(root, ".test-data", "confi-test.db");
+export const API_PORT = Number(process.env.API_PORT ?? 8787);
+export const APP_PORT = Number(process.env.APP_PORT ?? 5173);
+export const APP_BASE = process.env.APP_BASE_URL ?? `http://localhost:${APP_PORT}`;
+
+const CATEGORIES = ["cpu", "gpu", "motherboard", "ram", "storage", "case", "psu", "cooler"] as const;
+
+function psuFormOf(p: { psuForm?: string; formFactor?: string }): string | undefined {
+  return p.psuForm ?? p.formFactor;
+}
+
+function compatJson(p: Record<string, unknown>): string {
+  return JSON.stringify({
+    socket: p.socket, chipset: p.chipset, ramType: p.ramType, psuForm: psuFormOf(p),
+    power: p.power, formFactor: p.formFactor, gpuLength: p.gpuLength,
+    cpuCoolerMaxHeight: p.cpuCoolerMaxHeight, includesCooler: p.includesCooler,
+    coolTdp: p.coolTdp, sizeMm: p.sizeMm, benches: p.benches ?? [],
+  });
+}
+
+function specsJson(p: { specs?: unknown[] }): string {
+  return JSON.stringify(p.specs ?? []);
+}
+
+function seed(db: Database.Database): void {
+  db.exec("PRAGMA foreign_keys = ON");
+  const insertPart = db.prepare(`
+    INSERT INTO part (part_id, category, name, brand, price_kopecks, tdp_watt, compat_json, specs_json, image_url, is_active)
+    VALUES (@part_id, @category, @name, @brand, @price_kopecks, @tdp_watt, @compat_json, @specs_json, @image_url, 1)
+    ON CONFLICT(part_id) DO UPDATE SET
+      category=excluded.category, name=excluded.name, brand=excluded.brand,
+      price_kopecks=excluded.price_kopecks, tdp_watt=excluded.tdp_watt,
+      compat_json=excluded.compat_json, specs_json=excluded.specs_json,
+      image_url=excluded.image_url, is_active=1
+  `);
+  const insertReady = db.prepare(`
+    INSERT INTO ready_pc (ready_pc_id, name, brand, usage, price_kopecks, tdp_watt, summary, specs_json, image_url, in_stock, rating, is_active)
+    VALUES (@id, @name, @brand, @usage, @price_kopecks, @tdp_watt, @summary, @specs_json, @image_url, @in_stock, @rating, 1)
+    ON CONFLICT(ready_pc_id) DO UPDATE SET
+      name=excluded.name, brand=excluded.brand, usage=excluded.usage,
+      price_kopecks=excluded.price_kopecks, tdp_watt=excluded.tdp_watt,
+      summary=excluded.summary, specs_json=excluded.specs_json,
+      image_url=excluded.image_url, in_stock=excluded.in_stock,
+      rating=excluded.rating, is_active=1
+  `);
+  const insertReadyPart = db.prepare(`
+    INSERT INTO ready_pc_part (ready_pc_id, part_id, category)
+    VALUES (@ready_pc_id, @part_id, @category)
+    ON CONFLICT(ready_pc_id, part_id) DO NOTHING
+  `);
+
+  const seedAll = db.transaction(() => {
+    db.prepare("DELETE FROM app_setting").run();
+    db.prepare("DELETE FROM order_item").run();
+    db.prepare("DELETE FROM order_header").run();
+    db.prepare("DELETE FROM config_part").run();
+    db.prepare("DELETE FROM config").run();
+    db.prepare("DELETE FROM review").run();
+    db.prepare("DELETE FROM user_account").run();
+    db.prepare("DELETE FROM ready_pc_part").run();
+    db.prepare("DELETE FROM ready_pc").run();
+    db.prepare("DELETE FROM part").run();
+
+    let n = 0;
+    for (const cat of CATEGORIES) {
+      for (const p of (components as Record<string, unknown[]>)[cat] ?? []) {
+        const row = p as Record<string, unknown> & { id: string; name: string; brand: string; price: number; tdp: number };
+        insertPart.run({
+          part_id: row.id, category: cat, name: row.name, brand: row.brand,
+          price_kopecks: Math.round(row.price * 100), tdp_watt: Math.round(row.tdp),
+          compat_json: compatJson(row), specs_json: specsJson(row as { specs?: unknown[] }),
+          image_url: row.image ?? null,
+        });
+        n++;
+      }
+    }
+    for (const rp of readyPcs) {
+      const parts = rp.parts.map((pp) => pp.part);
+      insertReady.run({
+        id: rp.id, name: rp.name, brand: rp.brand, usage: rp.usage,
+        price_kopecks: Math.round(rp.price * 100), tdp_watt: Math.round(rp.tdp),
+        summary: rp.summary, specs_json: JSON.stringify(rp.specs ?? []),
+        image_url: rp.image ?? null, in_stock: rp.inStock ? 1 : 0, rating: rp.rating,
+      });
+      for (const { category, part } of rp.parts) {
+        insertReadyPart.run({ ready_pc_id: rp.id, part_id: part.id, category });
+      }
+    }
+    return n;
+  });
+  seedAll();
+}
+
+/** Create a fully-populated throwaway test DB; returns its path. */
+export function initTestDb(dbPath = TEST_DB_PATH): string {
+  mkdirSync(dirname(dbPath), { recursive: true });
+  const fresh = !existsSync(dbPath);
+  const db = new Database(dbPath);
+  db.exec("PRAGMA journal_mode = WAL");
+  if (fresh) db.exec(readFileSync(join(root, "db", "schema.sql"), "utf8"));
+  seed(db);
+  db.close();
+  return dbPath;
+}
+
+/** Wipe the analytics event table to isolate test runs. */
+export function resetAnalytics(dbPath = TEST_DB_PATH): void {
+  const db = new Database(dbPath);
+  db.prepare("DELETE FROM analytics_events").run();
+  db.close();
+}
+
+/** Mark onboarding complete so route-gate tests reach their screens. */
+export function setOnboardedTrue(dbPath = TEST_DB_PATH): void {
+  const db = new Database(dbPath);
+  db.prepare(
+    `INSERT INTO kv_store (k, v, updated_at) VALUES ('onboarded', '1', strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+     ON CONFLICT(k) DO UPDATE SET v='1', updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`,
+  ).run();
+  db.close();
+}
