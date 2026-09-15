@@ -12,7 +12,18 @@ UNION ALL SELECT 'config_part',      count(*) FROM config_part
 UNION ALL SELECT 'order_header',     count(*) FROM order_header
 UNION ALL SELECT 'order_item',       count(*) FROM order_item
 UNION ALL SELECT 'review',           count(*) FROM review
-UNION ALL SELECT 'app_setting',      count(*) FROM app_setting;
+UNION ALL SELECT 'app_setting',      count(*) FROM app_setting
+UNION ALL SELECT 'seller_brand',     count(*) FROM seller_brand
+UNION ALL SELECT 'auth_session',     count(*) FROM auth_session;
+
+-- 1b. Role users exist as expected (admin & seller, no phone for them).
+SELECT
+  (SELECT count(*) FROM user_account WHERE role='admin')  AS admin_count,
+  (SELECT count(*) FROM user_account WHERE role='seller') AS seller_count,
+  (SELECT count(*) FROM user_account WHERE role='customer') AS customer_count,
+  (SELECT count(*) FROM user_account WHERE role IN ('admin','seller') AND phone IS NOT NULL) AS roles_with_phone,
+  (SELECT count(*) FROM seller_brand sb JOIN user_account u ON u.user_id=sb.seller_id
+     WHERE u.role='seller' AND sb.brand='Confi') AS confi_seller_brand;
 
 -- FK integrity: orphaned junction rows should be 0.
 SELECT 'orphan_ready_pc_part' AS check_name,

@@ -1,7 +1,7 @@
--- Confi SQLite schema (STRICT, WAL). Version 2.
+-- Confi SQLite schema (STRICT, WAL). Version 3.
 -- DDL per plan section 2. Applied idempotently by db:init / db:seed.
 
-PRAGMA user_version = 2;
+PRAGMA user_version = 3;
 PRAGMA journal_mode = WAL;
 
 CREATE TABLE IF NOT EXISTS part (
@@ -50,7 +50,8 @@ CREATE TABLE IF NOT EXISTS user_account (
   name       TEXT NOT NULL,
   email      TEXT,
   phone      TEXT,
-  role       TEXT NOT NULL DEFAULT 'guest' CHECK (role IN ('customer','guest')),
+  role       TEXT NOT NULL DEFAULT 'customer' CHECK (role IN ('customer','seller','admin')),
+  company    TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   UNIQUE (email)
 ) STRICT;
@@ -135,6 +136,14 @@ CREATE TABLE IF NOT EXISTS auth_pending (
   code       TEXT NOT NULL,
   expires_at TEXT NOT NULL
 ) STRICT;
+
+-- Seller <-> brand ownership (1-to-many: a seller owns many brands).
+CREATE TABLE IF NOT EXISTS seller_brand (
+  seller_id TEXT NOT NULL,
+  brand     TEXT NOT NULL,
+  PRIMARY KEY (seller_id, brand),
+  FOREIGN KEY (seller_id) REFERENCES user_account(user_id) ON DELETE CASCADE
+) STRICT, WITHOUT ROWID;
 
 -- Generic key/value store for small app state (replaces remaining alfagen:* keys).
 CREATE TABLE IF NOT EXISTS kv_store (

@@ -16,7 +16,7 @@ const NAV = [
 ];
 
 export function Navbar() {
-  const { user, signOut } = useAuth();
+  const { user, isAdmin, isSeller, signOut } = useAuth();
   const { toast } = useToast();
   const { theme, toggleTheme } = useTheme();
   const navigate = useNavigate();
@@ -104,7 +104,24 @@ export function Navbar() {
                 <span className="max-w-28 truncate text-sm font-semibold">
                   {user.name}
                 </span>
+                {isSeller ? (
+                  <span
+                    className="rounded-full bg-accent px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground"
+                    title="Продавец"
+                  >
+                    Продавец
+                  </span>
+                ) : null}
               </Link>
+              {isAdmin ? (
+                <Link
+                  to="/admin"
+                  onClick={() => setOpen(false)}
+                  className="hidden items-center rounded-md px-2 text-sm font-medium text-muted-foreground no-underline hover:bg-accent hover:text-foreground sm:inline-flex"
+                >
+                  Администрирование
+                </Link>
+              ) : null}
               <Button
                 variant="ghost"
                 onClick={handleSignOut}

@@ -1,6 +1,7 @@
 import { lazy, Suspense, type ReactNode } from "react";
 import { createBrowserRouter, RouterProvider } from "react-router-dom";
 import { Skeleton } from "./components/ui";
+import { RequireAuth, RequireRole } from "./screens/guards";
 
 const Layout = lazy(() => import("./screens/Layout"));
 const Onboarding = lazy(() => import("./screens/Onboarding"));
@@ -14,6 +15,7 @@ const AutoResult = lazy(() => import("./screens/AutoResult"));
 const Profile = lazy(() => import("./screens/Profile"));
 const Checkout = lazy(() => import("./screens/Checkout"));
 const InstallmentCheckout = lazy(() => import("./screens/InstallmentCheckout"));
+const Admin = lazy(() => import("./screens/Admin"));
 const NotFound = lazy(() => import("./screens/NotFound"));
 
 function fallback(): ReactNode {
@@ -53,10 +55,46 @@ const router = createBrowserRouter([
       { path: "config", element: <CustomConfig /> },
       { path: "auto", element: <AutoSelect /> },
       { path: "auto/result", element: <AutoResult /> },
-      { path: "profile", element: <Profile /> },
-      { path: "profile/:tab", element: <Profile /> },
-      { path: "checkout", element: <Checkout /> },
-      { path: "alpha", element: <InstallmentCheckout /> },
+      {
+        path: "profile",
+        element: (
+          <RequireAuth>
+            <Profile />
+          </RequireAuth>
+        ),
+      },
+      {
+        path: "profile/:tab",
+        element: (
+          <RequireAuth>
+            <Profile />
+          </RequireAuth>
+        ),
+      },
+      {
+        path: "checkout",
+        element: (
+          <RequireAuth>
+            <Checkout />
+          </RequireAuth>
+        ),
+      },
+      {
+        path: "alpha",
+        element: (
+          <RequireAuth>
+            <InstallmentCheckout />
+          </RequireAuth>
+        ),
+      },
+      {
+        path: "admin",
+        element: (
+          <RequireRole role="admin">
+            <Admin />
+          </RequireRole>
+        ),
+      },
       { path: "*", element: <NotFound /> },
     ],
   },

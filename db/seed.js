@@ -8,6 +8,7 @@ import { readFileSync, appendFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { components, readyPcs, seededReviews } from "../src/data/mock.ts";
+import { migrateUserAccount } from "./migrate.ts";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const DB_PATH = join(root, "db", "confi.db");
@@ -68,6 +69,7 @@ const db = new Database(DB_PATH);
 db.pragma("foreign_keys = ON");
 db.pragma("journal_mode = WAL");
 db.exec(readFileSync(SCHEMA, "utf8"));
+migrateUserAccount(db);
 
 /** Validate a single part row; returns null to skip. */
 function validatePart(p) {
@@ -120,6 +122,20 @@ const insertReview = db.prepare(`
   ON CONFLICT(review_id) DO NOTHING
 `);
 
+const upsertAccount = db.prepare(`
+  INSERT INTO user_account (user_id, name, email, phone, role, company)
+  VALUES (@user_id, @name, @email, @phone, @role, @company)
+  ON CONFLICT(user_id) DO UPDATE SET
+    email=excluded.email, phone=excluded.phone,
+    role=excluded.role, company=excluded.company
+`);
+
+const insertSellerBrand = db.prepare(`
+  INSERT INTO seller_brand (seller_id, brand)
+  VALUES (@seller_id, @brand)
+  ON CONFLICT(seller_id, brand) DO NOTHING
+`);
+
 const seedAll = db.transaction(() => {
   // Clear in FK-safe order: child tables first, then catalog parents.
   db.prepare("DELETE FROM app_setting").run();
@@ -128,6 +144,7 @@ const seedAll = db.transaction(() => {
   db.prepare("DELETE FROM config_part").run();
   db.prepare("DELETE FROM config").run();
   db.prepare("DELETE FROM review").run();
+  db.prepare("DELETE FROM seller_brand").run();
   db.prepare("DELETE FROM user_account").run();
   db.prepare("DELETE FROM ready_pc_part").run();
   db.prepare("DELETE FROM ready_pc").run();
@@ -177,6 +194,25 @@ const seedAll = db.transaction(() => {
       created_at: new Date(r.createdAt).toISOString(),
     });
   }
+
+  // Roles: admin & seller have NO phone (email-only login). Seller owns brand(s).
+  upsertAccount.run({
+    user_id: "usr-admin",
+    name: "Администратор",
+    email: "avgordeev@alfabank.ru",
+    phone: null,
+    role: "admin",
+    company: null,
+  });
+  upsertAccount.run({
+    user_id: "usr-seller",
+    name: "Продавец Confi",
+    email: "user@company.com",
+    phone: null,
+    role: "seller",
+    company: "Confi Маркет",
+  });
+  insertSellerBrand.run({ seller_id: "usr-seller", brand: "Confi" });
 
   return partCount;
 });

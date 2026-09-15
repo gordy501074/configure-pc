@@ -7,10 +7,12 @@ import express from "express";
 import cors from "cors";
 import { createCatalogRepository } from "./repository/catalog.ts";
 import { createUserRepository } from "./repository/user-data.ts";
+import { createSellerRepository } from "./repository/seller.ts";
 import { createAppStateRepository } from "./repository/app-state.ts";
 import { createAnalyticsRepository, type AnalyticsEvent } from "./repository/analytics.ts";
 import { openDb } from "./db.ts";
 import type { SaveConfigInput, SaveOrderInput, SaveReviewInput } from "./repository/user-data.ts";
+import type { UserRole } from "./repository/types.ts";
 
 const app = express();
 app.use(cors());
@@ -19,8 +21,11 @@ app.use(express.json());
 const db = openDb();
 const catalog = createCatalogRepository(db);
 const userData = createUserRepository(db);
+const sellerRepo = createSellerRepository(db);
 const appState = createAppStateRepository(db);
 const analytics = createAnalyticsRepository(db);
+
+const VALID_ROLES: UserRole[] = ["customer", "seller", "admin"];
 
 /** Resolve the acting user id: explicit body/query user or surrogate session. */
 function actorId(req: express.Request): string {
@@ -28,6 +33,50 @@ function actorId(req: express.Request): string {
   const fromQuery =
     typeof req.query.userId === "string" ? req.query.userId : undefined;
   return (fromBody ?? fromQuery ?? "usr-localstorage-import") as string;
+}
+
+/** Read the client session id from the confi_session cookie, or body.sessionId. */
+function sessionIdOf(req: express.Request): string | null {
+  const header = req.headers.cookie;
+  if (header) {
+    const m = header.match(/(?:^|;\s*)confi_session=([^;]+)/);
+    if (m) {
+      try {
+        return decodeURIComponent(m[1]);
+      } catch {
+        return m[1];
+      }
+    }
+  }
+  const body = req.body as { sessionId?: string } | undefined;
+  return body?.sessionId ?? null;
+}
+
+/** Resolve the acting user's role from the session; null if none/invalid. */
+function actorRole(req: express.Request): { userId: string; role: UserRole } | null {
+  const sid = sessionIdOf(req);
+  if (!sid) return null;
+  const userId = appState.getSessionUser(sid);
+  if (!userId) return null;
+  const user = userData.getUser(userId);
+  if (!user) return null;
+  return { userId: user.id, role: user.role };
+}
+
+function requireAdmin(
+  req: express.Request,
+  res: express.Response,
+): { userId: string; role: UserRole } | null {
+  const actor = actorRole(req);
+  if (!actor) {
+    res.status(403).json({ error: "unauthorized" });
+    return null;
+  }
+  if (actor.role !== "admin") {
+    res.status(403).json({ error: "forbidden" });
+    return null;
+  }
+  return actor;
 }
 
 // ---- Catalog ----
@@ -64,15 +113,18 @@ app.post("/api/session", (req, res) => {
     name?: string;
     email?: string;
     phone?: string;
-    role?: "customer" | "guest";
+    role?: string;
     createdAt?: number;
   };
+  if (body.role !== undefined && !VALID_ROLES.includes(body.role as UserRole)) {
+    return res.status(400).json({ error: "invalid role" });
+  }
   const user = userData.upsertUser({
     id: body.id,
     name: body.name ?? "Гость",
     email: body.email,
     phone: body.phone,
-    role: body.role ?? "customer",
+    role: (body.role as UserRole | undefined) ?? "customer",
     createdAt: body.createdAt,
   });
   const sessionId = appState.createSession(user.id);
@@ -97,6 +149,90 @@ app.get("/api/user/:id", (req, res) => {
   const user = userData.getUser(req.params.id);
   if (!user) return res.status(404).json({ error: "user not found" });
   res.json(user);
+});
+
+// ---- Profile (self-service: client/seller) ----
+app.patch("/api/profile", (req, res) => {
+  const actor = actorRole(req);
+  if (!actor) return res.status(403).json({ error: "unauthorized" });
+  if (actor.role === "admin") return res.status(403).json({ error: "forbidden" });
+
+  const body = (req.body ?? {}) as { name?: string; company?: string };
+  const user = userData.updateProfile(actor.userId, {
+    name: body.name,
+    company: body.company,
+  });
+  if (!user) return res.status(404).json({ error: "user not found" });
+  res.json(user);
+});
+
+// ---- Admin: user management ----
+app.get("/api/users", (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  res.json(userData.listUsers());
+});
+
+app.post("/api/users", (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  const body = req.body as {
+    name?: string;
+    email?: string;
+    phone?: string;
+    role?: string;
+    company?: string;
+  };
+  const role = (body.role ?? "customer") as UserRole;
+  if (!VALID_ROLES.includes(role)) {
+    return res.status(400).json({ error: "invalid role" });
+  }
+  if (!body.name || !String(body.name).trim()) {
+    return res.status(400).json({ error: "name required" });
+  }
+  let user;
+  try {
+    user = userData.createUser({
+      name: String(body.name).trim(),
+      email: body.email,
+      phone: body.phone,
+      role,
+      company: body.company,
+    });
+  } catch (err) {
+    if (err instanceof Error && err.message === "email_exists") {
+      return res.status(409).json({ error: "email_exists" });
+    }
+    return res.status(400).json({ error: "invalid user" });
+  }
+  res.json(user);
+});
+
+app.delete("/api/users/:id", (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  const ok = userData.deleteUser(req.params.id);
+  if (!ok) return res.status(404).json({ error: "user not found" });
+  res.status(204).end();
+});
+
+app.patch("/api/users/:id/role", (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  const body = req.body as { role?: string };
+  const role = body.role as UserRole | undefined;
+  if (!role || !VALID_ROLES.includes(role)) {
+    return res.status(400).json({ error: "invalid role" });
+  }
+  const user = userData.setUserRole(req.params.id, role);
+  if (!user) return res.status(404).json({ error: "user not found" });
+  res.json(user);
+});
+
+// ---- Seller: brands (owner or admin) ----
+app.get("/api/seller/:id/brands", (req, res) => {
+  const actor = actorRole(req);
+  if (!actor) return res.status(403).json({ error: "unauthorized" });
+  if (actor.role !== "admin" && actor.userId !== req.params.id) {
+    return res.status(403).json({ error: "forbidden" });
+  }
+  res.json(sellerRepo.listSellerBrands(req.params.id).map((brand) => ({ brand })));
 });
 
 // ---- Configs ----

@@ -75,11 +75,11 @@ test.describe("smoke: critical flows", () => {
     expect(errors(), "console/page errors on auto result").toEqual([]);
   });
 
-  test("@smoke profile page loads (guest)", async ({ page }) => {
+  test("@smoke profile redirects anonymous to /auth", async ({ page }) => {
     const errors = await watchErrors(page);
     await page.goto("/profile");
-    await expect(page).toHaveURL(/\/profile$/);
-    expect(errors(), "console/page errors on profile").toEqual([]);
+    await expect(page).toHaveURL(/\/auth/);
+    expect(errors(), "console/page errors on profile redirect").toEqual([]);
   });
 
   test("@smoke not-found route renders fallback, no crash", async ({ page }) => {

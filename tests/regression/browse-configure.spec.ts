@@ -8,6 +8,7 @@
 
 import { test, expect } from "@playwright/test";
 import { heal } from "../helpers/heal";
+import { APP_BASE } from "../helpers/testDb";
 
 test.describe("regression: browse & configure", () => {
   test("catalog → details → back keeps context", async ({ page }) => {
@@ -43,7 +44,16 @@ test.describe("regression: browse & configure", () => {
     expect(await page.getByRole("heading", { name: "Нет данных для подбора" }).count()).toBe(0);
   });
 
-  test("checkout with no cart shows empty-state, not blank/crash", async ({ page }) => {
+  test("checkout with no cart shows empty-state, not blank/crash", async ({ page, request }) => {
+    // /checkout now requires an authenticated (customer) session.
+    const sess = await request.post("/api/session", {
+      data: { email: "checkout-client@example.com", name: "Клиент" },
+    });
+    expect(sess.ok()).toBeTruthy();
+    const { sessionId } = await sess.json();
+    await page.context().addCookies([
+      { name: "confi_session", value: sessionId, url: APP_BASE.replace(/\/$/, "") },
+    ]);
     await page.goto("/checkout");
     await expect(page).toHaveURL(/\/checkout/);
     // Must-not-break: empty checkout renders the "Корзина пуста" fallback with a CTA.

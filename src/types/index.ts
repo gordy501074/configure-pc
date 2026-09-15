@@ -108,12 +108,15 @@ export interface Order {
   userName: string;
 }
 
+export type UserRole = "customer" | "seller" | "admin";
+
 export interface User {
   id: string;
   name: string;
   email?: string;
   phone?: string;
-  role: "customer" | "guest";
+  role: UserRole;
+  company?: string;
   createdAt: number;
 }
 

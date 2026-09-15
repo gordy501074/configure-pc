@@ -331,3 +331,51 @@ export async function saveSettingsRemote(
     body: JSON.stringify(patch),
   });
 }
+
+// ---- Profile (self-service) ----
+
+export async function updateProfile(
+  patch: { name?: string; company?: string },
+): Promise<User> {
+  return req<User>("/profile", {
+    method: "PATCH",
+    body: JSON.stringify(patch),
+  });
+}
+
+// ---- Admin (protected) ----
+
+export async function fetchUsers(): Promise<User[]> {
+  return req<User[]>("/users");
+}
+
+export async function createUser(input: {
+  name: string;
+  email?: string;
+  phone?: string;
+  role: User["role"];
+  company?: string;
+}): Promise<User> {
+  return req<User>("/users", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function deleteUser(id: string): Promise<void> {
+  await req<void>(`/users/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+export async function setUserRole(id: string, role: User["role"]): Promise<User> {
+  return req<User>(`/users/${encodeURIComponent(id)}/role`, {
+    method: "PATCH",
+    body: JSON.stringify({ role }),
+  });
+}
+
+// ---- Seller ----
+
+export async function fetchSellerBrands(sellerId: string): Promise<string[]> {
+  const rows = await req<{ brand: string }[]>(`/seller/${encodeURIComponent(sellerId)}/brands`);
+  return rows.map((r) => r.brand);
+}

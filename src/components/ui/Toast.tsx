@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { useMemo } from "react";
 import { Toaster as SonnerToaster, toast as sonnerToast } from "sonner";
 
 export interface ToastContextValue {
@@ -9,14 +10,17 @@ export interface ToastContextValue {
 }
 
 export function useToast(): ToastContextValue {
-  return {
-    toast: (message, tone = "success") => {
-      if (tone === "error") sonnerToast.error(message);
-      else if (tone === "info") sonnerToast.info(message);
-      else if (tone === "warning") sonnerToast.warning(message);
-      else sonnerToast.success(message);
-    },
-  };
+  return useMemo<ToastContextValue>(
+    () => ({
+      toast: (message, tone = "success") => {
+        if (tone === "error") sonnerToast.error(message);
+        else if (tone === "info") sonnerToast.info(message);
+        else if (tone === "warning") sonnerToast.warning(message);
+        else sonnerToast.success(message);
+      },
+    }),
+    [],
+  );
 }
 
 export function ToastProvider({ children }: { children: ReactNode }) {

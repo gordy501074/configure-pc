@@ -14,7 +14,7 @@ type Method = "phone" | "email";
 type Step = "input" | "sms";
 
 export default function Auth() {
-  const { signIn } = useAuth();
+  const { signIn, signOut } = useAuth();
   const { toast } = useToast();
   const navigate = useNavigate();
 
@@ -109,7 +109,6 @@ export default function Auth() {
       await signIn({
         name: "Пользователь",
         phone: formatPhone(sentPhone || phone),
-        role: "customer" as const,
       });
       toast("Вы вошли в аккаунт");
       navigate("/");
@@ -173,7 +172,6 @@ export default function Auth() {
       await signIn({
         name: email.split("@")[0] || "Пользователь",
         email,
-        role: "customer" as const,
       });
       toast("Вы вошли в аккаунт");
       navigate("/");
@@ -184,9 +182,9 @@ export default function Auth() {
     }
   };
 
-  const enterAsGuest = async () => {
-    await signIn({ name: "Гость", role: "guest" as const });
-    toast("Вы вошли как гость", "info");
+  const continueWithoutAccount = async () => {
+    await signOut();
+    toast("Вы продолжите без аккаунта", "info");
     navigate("/");
   };
 
@@ -300,8 +298,8 @@ export default function Auth() {
               <span className="h-px flex-1 bg-border" />
             </div>
 
-            <Button variant="secondary" onClick={enterAsGuest}>
-              Войти как гость
+            <Button variant="secondary" onClick={continueWithoutAccount}>
+              Продолжить без аккаунта
             </Button>
           </div>
         ) : (

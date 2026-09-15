@@ -17,7 +17,11 @@ interface AuthCtx {
   signingIn: boolean;
   signIn: (user: Partial<User> & { name: string }) => Promise<User>;
   signOut: () => Promise<void>;
-  isGuest: boolean;
+  refreshUser: () => Promise<void>;
+  isAuthenticated: boolean;
+  isAdmin: boolean;
+  isSeller: boolean;
+  isCustomer: boolean;
 }
 
 const Ctx = createContext<AuthCtx | null>(null);
@@ -67,6 +71,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null);
   }, []);
 
+  const refreshUser = useCallback(async () => {
+    const sid = getSessionId();
+    if (!sid) return;
+    const res = await getSession(sid);
+    if (res) setUser(res.user);
+  }, []);
+
   const value = useMemo<AuthCtx>(
     () => ({
       user,
@@ -74,9 +85,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       signingIn: !restored,
       signIn,
       signOut,
-      isGuest: user?.role === "guest",
+      refreshUser,
+      isAuthenticated: !!user,
+      isAdmin: user?.role === "admin",
+      isSeller: user?.role === "seller",
+      isCustomer: user?.role === "customer",
     }),
-    [user, sessionId, restored, signIn, signOut],
+    [user, sessionId, restored, signIn, signOut, refreshUser],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

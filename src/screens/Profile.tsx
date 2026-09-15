@@ -7,6 +7,8 @@ import {
   Button,
   Card,
   EmptyState,
+  Field,
+  Input,
   Select,
   SelectContent,
   SelectItem,
@@ -27,8 +29,10 @@ import {
   fetchAllReviews,
   fetchConfigs,
   fetchOrders,
+  fetchSellerBrands,
   fetchSettings,
   saveSettingsRemote,
+  updateProfile,
 } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { useTheme } from "../lib/theme";
@@ -43,32 +47,45 @@ const TABS: { key: Tab; label: string }[] = [
   { key: "settings", label: "Настройки" },
 ];
 
+function roleMeta(role: string): { label: string; variant: "success" | "warning" | "info" | "neutral" } {
+  if (role === "seller") return { label: "Продавец", variant: "warning" };
+  if (role === "admin") return { label: "Администратор", variant: "info" };
+  return { label: "Клиент", variant: "success" };
+}
+
 export default function Profile() {
   const { tab } = useParams<{ tab: string }>();
   const navigate = useNavigate();
   const { toast } = useToast();
-  const { user } = useAuth();
+  const { user, refreshUser } = useAuth();
   const { theme, setTheme } = useTheme();
   const [loadState, setLoadState] = useState<"loading" | "done">("loading");
   const [configs, setConfigs] = useState<Config[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
   const [reviews, setReviews] = useState<Review[]>([]);
   const [settings, setSettingsLocal] = useState<AppSettings>({ theme: "light", notifications: true });
+  const [brands, setBrands] = useState<string[]>([]);
+  const [editName, setEditName] = useState("");
+  const [editCompany, setEditCompany] = useState("");
+  const [editing, setEditing] = useState(false);
+  const [savingProfile, setSavingProfile] = useState(false);
 
   const active: Tab = (TABS.find((t) => t.key === tab)?.key ?? "configs") as Tab;
 
   const reload = useCallback(async () => {
     if (!user) return;
-    const [cfgs, ords, revs, setts] = await Promise.all([
+    const [cfgs, ords, revs, setts, br] = await Promise.all([
       fetchConfigs(user.id),
       fetchOrders(user.id),
       fetchAllReviews(),
       fetchSettings(user.id),
+      user.role === "seller" ? fetchSellerBrands(user.id) : Promise.resolve([]),
     ]);
     setConfigs(cfgs);
     setOrders(ords);
     setReviews(revs.filter((r) => r.author === user.name));
     setSettingsLocal(setts);
+    setBrands(br);
     setLoadState("done");
   }, [user]);
 
@@ -98,6 +115,36 @@ export default function Profile() {
     toast("Заказ отменён", "info");
   };
 
+  const beginEdit = () => {
+    setEditName(user!.name);
+    setEditCompany(user!.company ?? "");
+    setEditing(true);
+  };
+
+  const handleSaveProfile = async () => {
+    if (!user) return;
+    if (!editName.trim()) {
+      toast("Имя не может быть пустым", "error");
+      return;
+    }
+    setSavingProfile(true);
+    try {
+      await updateProfile({
+        name: editName.trim(),
+        ...(user.role === "seller" ? { company: editCompany } : {}),
+      });
+      // Reflect the updated contacts/name; role stays unchanged.
+      await refreshUser();
+      await reload();
+      toast("Аккаунт обновлён");
+      setEditing(false);
+    } catch {
+      toast("Не удалось сохранить изменения", "error");
+    } finally {
+      setSavingProfile(false);
+    }
+  };
+
   if (!user) {
     return (
       <div className="container">
@@ -115,18 +162,94 @@ export default function Profile() {
     <div className="container">
       <Breadcrumbs items={[{ label: "Главная", to: "/" }, { label: "Профиль" }]} />
 
-      <section className="mb-6 flex items-center gap-4" aria-label="Профиль пользователя">
+      <section className="mb-6 flex items-start gap-4" aria-label="Профиль пользователя">
         <div className="flex h-14 w-14 items-center justify-center rounded-full bg-primary/10 font-bold text-primary">
           {user.name.charAt(0).toUpperCase()}
         </div>
-        <div className="flex flex-col items-start gap-2">
-          <h1 className="text-2xl font-bold">{user.name}</h1>
-          <p className="text-muted-foreground">{user.phone ?? user.email ?? ""}</p>
-          <Badge variant={user.role === "guest" ? "neutral" : "success"}>
-            {user.role === "guest" ? "Гость" : "Клиент"}
-          </Badge>
+        <div className="flex min-w-0 flex-1 flex-col items-start gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <h1 className="text-2xl font-bold">{user.name}</h1>
+            <Badge variant={roleMeta(user.role).variant}>{roleMeta(user.role).label}</Badge>
+          </div>
+          {user.role === "seller" ? (
+            <p className="text-muted-foreground" aria-label="Компания">
+              {user.company ?? "Компания не указана"}
+            </p>
+          ) : null}
+          <p className="text-muted-foreground">
+            {user.role === "customer"
+              ? [user.email, user.phone].filter(Boolean).join(" · ")
+              : user.email}
+          </p>
+          <div className="flex flex-wrap items-center gap-3">
+            {!editing ? (
+              <Button variant="secondary" size="sm" onClick={beginEdit}>
+                Редактировать аккаунт
+              </Button>
+            ) : (
+              <>
+                <Field label="Имя" htmlFor="profile-name" className="min-w-52 gap-1.5">
+                  <Input
+                    id="profile-name"
+                    value={editName}
+                    onChange={(e) => setEditName(e.target.value)}
+                  />
+                </Field>
+                {user.role === "seller" ? (
+                  <Field label="Компания" htmlFor="profile-company" className="min-w-52 gap-1.5">
+                    <Input
+                      id="profile-company"
+                      value={editCompany}
+                      onChange={(e) => setEditCompany(e.target.value)}
+                    />
+                  </Field>
+                ) : null}
+                <div className="flex gap-2 pt-1">
+                  <Button size="sm" loading={savingProfile} onClick={handleSaveProfile}>
+                    Сохранить
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setEditing(false)}
+                    disabled={savingProfile}
+                  >
+                    Отмена
+                  </Button>
+                </div>
+              </>
+            )}
+          </div>
         </div>
       </section>
+
+      {user.role === "seller" ? (
+        <Card className="mb-6 gap-2 p-4" aria-label="Прайс-лист продавца">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-lg font-semibold">Прайс-лист</h2>
+            <span className="text-sm text-muted-foreground">в разработке</span>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {brands.length > 0 ? (
+              brands.map((b) => (
+                <Badge key={b} variant="outline">
+                  {b}
+                </Badge>
+              ))
+            ) : (
+              <span className="text-sm text-muted-foreground">Брендов пока нет</span>
+            )}
+          </div>
+        </Card>
+      ) : null}
+
+      {user.role === "admin" ? (
+        <div className="mb-6">
+          <Link to="/admin" className="font-medium text-primary no-underline hover:underline">
+            Администрирование пользователей
+          </Link>
+        </div>
+      ) : null}
 
       <nav
         className="mb-6 flex gap-1 rounded-lg bg-muted p-1"

@@ -49,10 +49,36 @@ export interface SaveReviewInput {
   text: string;
 }
 
+/** Self-service profile edit (client/seller). Role always preserved. */
+export interface UpdateProfileInput {
+  name?: string;
+  company?: string;
+}
+
+export interface CreateUserInput {
+  name: string;
+  email?: string;
+  phone?: string;
+  role: UserRole;
+  company?: string;
+}
+
 export interface UserDataRepository {
   // users / session
   getUser(id: string): UserDto | null;
-  upsertUser(user: Omit<UserDto, "id" | "createdAt"> & { id?: string; createdAt?: number }): UserDto;
+  upsertUser(user: {
+    id?: string;
+    name?: string;
+    email?: string;
+    phone?: string;
+    role?: UserRole;
+    createdAt?: number;
+  }): UserDto;
+  listUsers(): UserDto[];
+  createUser(input: CreateUserInput): UserDto;
+  deleteUser(id: string): boolean;
+  setUserRole(id: string, role: UserRole): UserDto | null;
+  updateProfile(userId: string, patch: UpdateProfileInput): UserDto | null;
 
   // configs
   listConfigs(userId: string): ConfigDto[];
@@ -80,12 +106,35 @@ export function createUserRepository(db: Database): UserDataRepository {
   const getUserStmt = db.prepare(
     `SELECT * FROM user_account WHERE user_id = ?`,
   );
-  const upsertUserStmt = db.prepare(
-    `INSERT INTO user_account (user_id, name, email, phone, role, created_at)
-     VALUES (@id, @name, @email, @phone, @role, @created_at)
-     ON CONFLICT(user_id) DO UPDATE SET
-       name=excluded.name, email=excluded.email, phone=excluded.phone, role=excluded.role`,
+  const getUserByEmailStmt = db.prepare(
+    `SELECT * FROM user_account WHERE email = ?`,
   );
+  const getUserByPhoneStmt = db.prepare(
+    `SELECT * FROM user_account WHERE phone = ?`,
+  );
+  const listUsersStmt = db.prepare(
+    `SELECT * FROM user_account ORDER BY created_at ASC, user_id ASC`,
+  );
+  const upsertUserStmt = db.prepare(
+    `INSERT INTO user_account (user_id, name, email, phone, role, company, created_at)
+     VALUES (@id, @name, @email, @phone, @role, @company, @created_at)
+     ON CONFLICT(user_id) DO UPDATE SET
+       name=excluded.name, email=excluded.email, phone=excluded.phone,
+       role=excluded.role, company=excluded.company`,
+  );
+  const updateUserContactsStmt = db.prepare(`
+    UPDATE user_account SET name=?, email=?, phone=? WHERE user_id=?
+  `);
+  const updateProfileNameStmt = db.prepare(`
+    UPDATE user_account SET name=? WHERE user_id=?
+  `);
+  const updateProfileCompanyStmt = db.prepare(`
+    UPDATE user_account SET company=? WHERE user_id=?
+  `);
+  const deleteUserStmt = db.prepare(`DELETE FROM user_account WHERE user_id = ?`);
+  const setUserRoleStmt = db.prepare(`
+    UPDATE user_account SET role=?, phone=? WHERE user_id=?
+  `);
 
   // --- configs ---
   const listConfigsStmt = db.prepare(
@@ -203,17 +252,101 @@ export function createUserRepository(db: Database): UserDataRepository {
     },
 
     upsertUser(input) {
-      const id = input.id ?? `usr-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-      const created_at = input.createdAt ? new Date(input.createdAt).toISOString() : now();
+      // Resolve existing account by id / email / phone. If found, reuse its
+      // user_id AND existing role (requested role ignored). This makes email
+      // login stable for admin/seller and keeps customer data on re-login.
+      const nowIso = now();
+      let row: UserRow | undefined;
+
+      if (input.id) {
+        row = getUserStmt.get(input.id) as UserRow | undefined;
+      }
+      if (!row && input.email) {
+        row = getUserByEmailStmt.get(input.email) as UserRow | undefined;
+      }
+      if (!row && input.phone) {
+        row = getUserByPhoneStmt.get(input.phone) as UserRow | undefined;
+      }
+
+      if (row) {
+        // Reuse the existing account: update name + contacts, keep role/company.
+        updateUserContactsStmt.run(
+          input.name ?? row.name,
+          input.email ?? row.email,
+          input.phone ?? row.phone,
+          row.user_id,
+        );
+        return userToDto(getUserStmt.get(row.user_id) as UserRow);
+      }
+
+      // New account -> always a customer (demo policy).
+      const id =
+        input.id ?? `usr-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+      const created_at = input.createdAt ? new Date(input.createdAt).toISOString() : nowIso;
+      upsertUserStmt.run({
+        id,
+        name: input.name ?? "Клиент",
+        email: input.email ?? null,
+        phone: input.phone ?? null,
+        role: "customer",
+        company: null,
+        created_at,
+      });
+      return userToDto(getUserStmt.get(id) as UserRow);
+    },
+
+    listUsers() {
+      const rows = listUsersStmt.all() as UserRow[];
+      return rows.map(userToDto);
+    },
+
+    createUser(input) {
+      if (input.email) {
+        const existing = getUserByEmailStmt.get(input.email) as UserRow | undefined;
+        if (existing) throw new Error("email_exists");
+      }
+      const id = `usr-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+      const phone =
+        input.role === "seller" || input.role === "admin" ? null : (input.phone ?? null);
       upsertUserStmt.run({
         id,
         name: input.name,
         email: input.email ?? null,
-        phone: input.phone ?? null,
+        phone,
         role: input.role,
-        created_at,
+        company: input.role === "seller" ? (input.company ?? null) : null,
+        created_at: now(),
       });
       return userToDto(getUserStmt.get(id) as UserRow);
+    },
+
+    deleteUser(id) {
+      const info = deleteUserStmt.run(id);
+      return info.changes > 0;
+    },
+
+    setUserRole(id, role) {
+      const row = getUserStmt.get(id) as UserRow | undefined;
+      if (!row) return null;
+      // Policy: only customers carry a phone, so switching roles clears it.
+      // `company` only applies to sellers; admins/customers get NULL.
+      const company = role === "seller" ? row.company : null;
+      setUserRoleStmt.run(role, null, id);
+      db.prepare(`UPDATE user_account SET company=? WHERE user_id=?`).run(company, id);
+      return userToDto(getUserStmt.get(id) as UserRow);
+    },
+
+    updateProfile(userId, patch) {
+      const row = getUserStmt.get(userId) as UserRow | undefined;
+      if (!row) return null;
+      if (typeof patch.name === "string" && patch.name.trim()) {
+        updateProfileNameStmt.run(patch.name.trim(), userId);
+      }
+      // Only sellers may set "company".
+      if (row.role === "seller" && patch.company !== undefined) {
+        updateProfileCompanyStmt.run(patch.company?.trim() || null, userId);
+      }
+      return userToDto(getUserStmt.get(userId) as UserRow);
     },
 
     listConfigs(userId) {

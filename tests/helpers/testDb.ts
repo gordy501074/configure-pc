@@ -2,10 +2,11 @@
 // isolated Playwright runs, plus shared constants for config/CI.
 
 import Database from "better-sqlite3";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { components, readyPcs } from "../../src/data/mock.ts";
+import { migrateUserAccount } from "../../db/migrate.ts";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -60,6 +61,19 @@ function seed(db: Database.Database): void {
     ON CONFLICT(ready_pc_id, part_id) DO NOTHING
   `);
 
+  const upsertAccount = db.prepare(`
+    INSERT INTO user_account (user_id, name, email, phone, role, company)
+    VALUES (@user_id, @name, @email, @phone, @role, @company)
+    ON CONFLICT(user_id) DO UPDATE SET
+      email=excluded.email, phone=excluded.phone,
+      role=excluded.role, company=excluded.company
+  `);
+  const insertSellerBrand = db.prepare(`
+    INSERT INTO seller_brand (seller_id, brand)
+    VALUES (@seller_id, @brand)
+    ON CONFLICT(seller_id, brand) DO NOTHING
+  `);
+
   const seedAll = db.transaction(() => {
     db.prepare("DELETE FROM app_setting").run();
     db.prepare("DELETE FROM order_item").run();
@@ -67,6 +81,7 @@ function seed(db: Database.Database): void {
     db.prepare("DELETE FROM config_part").run();
     db.prepare("DELETE FROM config").run();
     db.prepare("DELETE FROM review").run();
+    db.prepare("DELETE FROM seller_brand").run();
     db.prepare("DELETE FROM user_account").run();
     db.prepare("DELETE FROM ready_pc_part").run();
     db.prepare("DELETE FROM ready_pc").run();
@@ -97,6 +112,17 @@ function seed(db: Database.Database): void {
         insertReadyPart.run({ ready_pc_id: rp.id, part_id: part.id, category });
       }
     }
+
+    upsertAccount.run({
+      user_id: "usr-admin", name: "Администратор", email: "avgordeev@alfabank.ru",
+      phone: null, role: "admin", company: null,
+    });
+    upsertAccount.run({
+      user_id: "usr-seller", name: "Продавец Confi", email: "user@company.com",
+      phone: null, role: "seller", company: "Confi Маркет",
+    });
+    insertSellerBrand.run({ seller_id: "usr-seller", brand: "Confi" });
+
     return n;
   });
   seedAll();
@@ -105,10 +131,12 @@ function seed(db: Database.Database): void {
 /** Create a fully-populated throwaway test DB; returns its path. */
 export function initTestDb(dbPath = TEST_DB_PATH): string {
   mkdirSync(dirname(dbPath), { recursive: true });
-  const fresh = !existsSync(dbPath);
   const db = new Database(dbPath);
   db.exec("PRAGMA journal_mode = WAL");
-  if (fresh) db.exec(readFileSync(join(root, "db", "schema.sql"), "utf8"));
+  // schema.sql is CREATE TABLE IF NOT EXISTS — safe on every run, which also
+  // adds any new tables (e.g. seller_brand) to pre-existing test DBs.
+  db.exec(readFileSync(join(root, "db", "schema.sql"), "utf8"));
+  migrateUserAccount(db);
   seed(db);
   db.close();
   return dbPath;
