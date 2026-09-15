@@ -30,6 +30,7 @@
 - Иконки — **lucide-react**; уведомления — **sonner** (`richColors`, по центру сверху)
 - Утилиты стилей — **clsx** + **tailwind-merge** (`cn`)
 - Форматирование — нативный `Intl.NumberFormat` (рубли `ru-RU`), дни/даты на русском
+- **Опциональный SQLite-бэкенд** — Express 5 + `better-sqlite3` (STRICT-таблицы, WAL, внешние ключи), типизированные DAO в `src/server/repository/`
 - Шрифты — **Inter** (основной) + **Manrope** (заголовки) через Google Fonts с `display=swap`
 - Путь-алиас `@/*` → `src/*`
 
@@ -84,6 +85,45 @@ src/
 | `/alpha` | Рассрочка 0-0-4 от Альфа-Банка |
 | `*` | 404 |
 
+## SQLite-бэкенд (миграция данных)
+
+Рядом с `localStorage`-хранилищем появился опциональный **Node-бэкенд** на
+Express + `better-sqlite3`, куда переносится каталог, готовые ПК, сборки,
+заказы, отзывы и настройки. Данные лежат в `db/confi.db` (STRICT-таблицы).
+
+### Команды
+
+| Команда | Действие |
+| --- | --- |
+| `npm run db:init` | Создать `db/confi.db` со схемой (идемпотентно, `user_version=1`) |
+| `npm run db:seed` | Seed каталога/готовых ПК/отзывов из `src/data/mock.ts` (пересоздаёт каталог) |
+| `npm run db:import <export.json>` | Импорт пользовательских данных из localStorage-экспорта (батчинг, quarantine) |
+| `npm run db:backup` | Резервная копия `db/confi.db` в `db/backups/` |
+| `npm run db:verify` | Проверка целостности и count по таблицам |
+| `npm run db:test:api` | End-to-end тест API (нужен запущенный сервер) |
+| `npm run server` | Запуск API-сервера на `http://localhost:8787` |
+
+Каталог — единственный источник правды для `part`/`ready_pc`: seed читает
+`src/data/mock.ts` напрямую (Node 24 native type-stripping), валидирует каждую
+запись и пишет битые строки в `db/quarantine-*.log`.
+
+### API
+
+- `GET /api/parts[?category=]` — каталог компонентов
+- `GET /api/parts/:id`, `GET /api/ready`, `GET /api/ready/:id` — каталог
+- `POST /api/session`, `GET /api/user/:id` — сессия/пользователи
+- `GET/PUT/DELETE /api/configs[/:id]` — сборки (`?userId=`)
+- `GET/PUT/DELETE /api/orders[/:id]` — заказы
+- `GET/PUT /api/reviews[/:id]` (`?entityId=`) — отзывы
+- `GET/PATCH /api/settings` — настройки
+- `GET /api/health` — проверка состояния
+
+Актор данных по умолчанию — суррогатный пользователь `usr-localstorage-import`.
+Слой `src/server/repository/` реализует типизированные DAO (part, ready_pc,
+config, order, review, user, setting). Фронтенд-приложение работает как и раньше
+на `localStorage`/`mock.ts` и остаётся fully-функциональным без запущенного
+сервера; бэкенд служит опциональным серверным хранилищем.
+
 ## Пакет «alfagen»
 
 Хранилище `localStorage` использует префикс `alfagen:`:
@@ -112,7 +152,7 @@ npm run build
 npm run preview
 ```
 
-Требования: Node.js и npm (проект типа ESM, `"type": "module"`; целевой таргет сборки `es2020`).
+Требования: Node.js (≥ 22.6 для type-stripping в `db/*.js`; рекомендовано 24+) и npm (проект ESM, `"type": "module"`; таргет сборки `es2020`).
 
 ## Скрипты
 
@@ -121,3 +161,12 @@ npm run preview
 | `npm run dev` | Запуск dev-сервера |
 | `npm run build` | Проверка типов + прод-сборка |
 | `npm run preview` | Просмотр прод-сборки |
+| `npm run typecheck` | Проверка типов клиента и сервера |
+| `npm run server` | Запуск SQLite API-сервера (`http://localhost:8787`) |
+| `npm run server:dev` | Запуск SQLite API-сервера в watch-режиме |
+| `npm run db:init` | Создание схемы БД |
+| `npm run db:seed` | Seed каталога из `mock.ts` |
+| `npm run db:import` | Импорт из localStorage-экспорта |
+| `npm run db:backup` | Бэкап `confi.db` |
+| `npm run db:verify` | Проверка целостности БД |
+| `npm run db:test:api` | End-to-end тест API (нужен запущенный сервер) |

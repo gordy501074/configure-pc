@@ -6,7 +6,16 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "db:init": "node db/init.js",
+    "db:seed": "node db/seed.js",
+    "db:import": "node db/import-localstorage.js",
+    "db:backup": "node db/backup.js",
+    "db:verify": "node db/verify.js",
+    "db:test:api": "node db/api-e2e.mjs",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.server.json",
+    "server": "node --experimental-strip-types src/server/index.ts",
+    "server:dev": "node --experimental-strip-types --watch src/server/index.ts"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.23",
@@ -16,8 +25,11 @@
     "@radix-ui/react-switch": "^1.3.7",
     "@radix-ui/react-tabs": "^1.1.21",
     "@tailwindcss/vite": "^4.3.3",
+    "better-sqlite3": "^13.0.3",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "cors": "^2.8.6",
+    "express": "^5.2.1",
     "lucide-react": "^1.34.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
@@ -27,6 +39,10 @@
     "tailwindcss": "^4.3.3"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/node": "^26.5.1",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.4",
@@ -34,6 +50,7 @@
     "vite": "^5.4.11"
   },
   "allowScripts": {
-    "esbuild@0.21.5": true
+    "esbuild@0.21.5": true,
+    "better-sqlite3@13.0.3": true
   }
 }

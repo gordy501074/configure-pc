@@ -5,3 +5,7 @@ dist-ssr
 *.local
 *.log
 .DS_Store
+db/confi.db
+db/confi.db-wal
+db/confi.db-shm
+db/backups/
