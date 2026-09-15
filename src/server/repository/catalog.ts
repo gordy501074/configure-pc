@@ -1,7 +1,7 @@
 // Catalog DAO: parts and ready PCs (read-mostly).
 
 import type { Database } from "better-sqlite3";
-import type { ComponentCategory, PartDto, PartRow, ReadyPcDto, ReadyPcRow } from "./types.ts";
+import type { ComponentCategory, ConfigPartDto, PartDto, PartRow, ReadyPcDto, ReadyPcRow } from "./types.ts";
 import { partToDto, readyPcToBaseDto } from "./types.ts";
 
 export interface CatalogRepository {
@@ -43,6 +43,9 @@ export function createCatalogRepository(db: Database): CatalogRepository {
   const readyPartIdsStmt = db.prepare(
     `SELECT part_id, category FROM ready_pc_part WHERE ready_pc_id = ? ORDER BY category`,
   );
+  const reviewCountStmt = db.prepare(
+    `SELECT count(*) AS c FROM review WHERE ready_pc_id = ?`,
+  );
 
   function readyPcWithParts(row: ReadyPcRow): ReadyPcDto | null {
     if (!row) return null;
@@ -54,9 +57,13 @@ export function createCatalogRepository(db: Database): CatalogRepository {
       partsByIds(db, links.map((l) => l.part_id)).map((p) => [p.id, p]),
     );
     const parts = links
-      .map((l) => byId.get(l.part_id))
-      .filter((p): p is PartDto => !!p);
-    return { ...readyPcToBaseDto(row), parts };
+      .map((l) => {
+        const part = byId.get(l.part_id);
+        return part ? { category: l.category, part } : null;
+      })
+      .filter((p): p is ConfigPartDto => !!p);
+    const reviewCount = (reviewCountStmt.get(row.ready_pc_id) as { c: number }).c;
+    return { ...readyPcToBaseDto(row), reviewCount, parts };
   }
 
   return {

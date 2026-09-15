@@ -52,7 +52,7 @@ export interface SaveReviewInput {
 export interface UserDataRepository {
   // users / session
   getUser(id: string): UserDto | null;
-  upsertUser(user: Omit<UserDto, "createdAt"> & { createdAt?: number }): UserDto;
+  upsertUser(user: Omit<UserDto, "id" | "createdAt"> & { id?: string; createdAt?: number }): UserDto;
 
   // configs
   listConfigs(userId: string): ConfigDto[];
@@ -203,16 +203,17 @@ export function createUserRepository(db: Database): UserDataRepository {
     },
 
     upsertUser(input) {
+      const id = input.id ?? `usr-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
       const created_at = input.createdAt ? new Date(input.createdAt).toISOString() : now();
       upsertUserStmt.run({
-        id: input.id,
+        id,
         name: input.name,
         email: input.email ?? null,
         phone: input.phone ?? null,
         role: input.role,
         created_at,
       });
-      return userToDto(getUserStmt.get(input.id) as UserRow);
+      return userToDto(getUserStmt.get(id) as UserRow);
     },
 
     listConfigs(userId) {

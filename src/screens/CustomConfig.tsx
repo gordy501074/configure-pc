@@ -17,7 +17,7 @@ import { CATEGORY_LABELS, formatPrice, formatWatts } from "../lib/format";
 import { configStats, validateConfig, isConfigComplete } from "../lib/compatibility";
 import { saveConfigAction, shareAction } from "../lib/actions";
 import { useAuth } from "../lib/auth";
-import { uid } from "../lib/storage";
+import { uid } from "../lib/session";
 import type { ComponentCategory, Config, Part } from "../types";
 
 const CATEGORY_ORDER: ComponentCategory[] = [
@@ -98,7 +98,7 @@ export default function CustomConfig() {
     setChosen((prev) => ({ ...prev, [category]: null }));
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!complete) {
       toast("Заполните все категории без ошибок совместимости", "error");
       return;
@@ -119,7 +119,7 @@ export default function CustomConfig() {
       updatedAt: Date.now(),
       source: "custom",
     };
-    const res = saveConfigAction(config);
+    const res = await saveConfigAction(config, user.id);
     toast(res.message);
   };
 

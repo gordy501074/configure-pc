@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
 import {
@@ -20,13 +20,13 @@ import {
 import { ConfigPartsTable } from "../components/shared/ConfigPartsTable";
 import { ReviewDialog } from "../components/shared/ReviewDialog";
 import { InstallmentPlan } from "../components/shared/InstallmentPlan";
-import { readyPcs, seededReviews } from "../data/mock";
+import { fetchReadyPc, fetchReviews } from "../lib/api";
 import { formatPrice, USAGE_LABELS, formatAgo } from "../lib/format";
 import { saveConfigAction, shareAction, listReviews } from "../lib/actions";
 import { useAuth } from "../lib/auth";
 import { configStats } from "../lib/compatibility";
-import { uid } from "../lib/storage";
-import type { Review } from "../types";
+import { uid } from "../lib/session";
+import type { ReadyPc, Review } from "../types";
 
 export default function PcCard() {
   const { id } = useParams<{ id: string }>();
@@ -34,25 +34,35 @@ export default function PcCard() {
   const { toast } = useToast();
   const { user } = useAuth();
   const [loadState, setLoadState] = useState<"loading" | "done">("loading");
+  const [pc, setPc] = useState<ReadyPc | null>(null);
   const [reviews, setReviews] = useState<Review[]>([]);
   const [reviewOpen, setReviewOpen] = useState(false);
 
-  const pc = useMemo(() => readyPcs.find((p) => p.id === id), [id]);
-
   useEffect(() => {
+    if (!id) return;
+    let cancelled = false;
     setLoadState("loading");
-    const t = window.setTimeout(() => {
+    Promise.all([fetchReadyPc(id), listReviews(id)]).then(([ready, revs]) => {
+      if (cancelled) return;
+      if (ready) setPc(ready);
+      setReviews(revs);
       setLoadState("done");
-      setReviews(listReviews(id ?? ""));
-    }, 300);
-    return () => window.clearTimeout(t);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [id]);
 
-  const allReviews = useMemo(() => {
-    const map = new Map<string, Review>();
-    for (const r of [...seededReviews, ...reviews]) map.set(r.id, r);
-    return Array.from(map.values()).filter((r) => r.entityId === id);
-  }, [reviews, id]);
+  useEffect(() => {
+    if (!id || loadState !== "done") return;
+    let cancelled = false;
+    fetchReviews(id).then((revs) => {
+      if (!cancelled) setReviews(revs);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [id, loadState, reviews.length]);
 
   if (loadState === "loading") {
     return (
@@ -80,8 +90,8 @@ export default function PcCard() {
 
   const stats = configStats({ parts: pc.parts });
   const avgRating =
-    allReviews.length > 0
-      ? allReviews.reduce((s, r) => s + r.rating, 0) / allReviews.length
+    reviews.length > 0
+      ? reviews.reduce((s, r) => s + r.rating, 0) / reviews.length
       : pc.rating;
 
   const configureFromTemplate = () => {
@@ -108,21 +118,24 @@ export default function PcCard() {
     });
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!user) {
       toast("Войдите, чтобы сохранить конфигурацию", "info");
       navigate("/auth");
       return;
     }
-    const res = saveConfigAction({
-      id: uid("cfg"),
-      name: pc.name,
-      parts: pc.parts,
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-      source: "ready",
-      usage: pc.usage,
-    });
+    const res = await saveConfigAction(
+      {
+        id: uid("cfg"),
+        name: pc.name,
+        parts: pc.parts,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        source: "ready",
+        usage: pc.usage,
+      },
+      user.id,
+    );
     toast(res.message);
   };
 
@@ -157,7 +170,7 @@ export default function PcCard() {
             <h1 id="pc-name" className="text-3xl font-bold">
               {pc.name}
             </h1>
-            <StarRating value={avgRating} showValue reviewCount={allReviews.length} />
+            <StarRating value={avgRating} showValue reviewCount={reviews.length} />
             <p className="text-muted-foreground">{pc.summary}</p>
           </div>
 
@@ -231,13 +244,13 @@ export default function PcCard() {
 
       <section className="mt-6 flex flex-col gap-4" aria-labelledby="reviews-title">
         <h2 id="reviews-title" className="text-lg font-semibold">
-          Отзывы ({allReviews.length})
+          Отзывы ({reviews.length})
         </h2>
-        {allReviews.length === 0 ? (
+        {reviews.length === 0 ? (
           <p className="text-muted-foreground">Отзывов пока нет. Станьте первым!</p>
         ) : (
           <div className="flex flex-col gap-3">
-            {allReviews.map((r) => (
+            {reviews.map((r) => (
               <Card key={r.id} className="gap-3 p-4">
                 <div className="flex flex-wrap items-center gap-3">
                   <StarRating value={r.rating} />
@@ -264,7 +277,7 @@ export default function PcCard() {
         onClose={() => setReviewOpen(false)}
         entityId={pc.id}
         author={user?.name ?? "Гость"}
-        onSubmitted={() => setReviews(listReviews(pc.id))}
+        onSubmitted={() => void listReviews(pc.id).then(setReviews)}
       />
     </div>
   );

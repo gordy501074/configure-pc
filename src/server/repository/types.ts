@@ -102,8 +102,9 @@ export interface ReadyPcDto {
   image?: string;
   inStock: boolean;
   rating: number;
+  reviewCount: number;
   /** Parts attached via ready_pc_part, resolved to PartDto. */
-  parts: PartDto[];
+  parts: ConfigPartDto[];
 }
 
 export interface ReviewRow {
@@ -245,7 +246,9 @@ export function partToDto(row: PartRow): PartDto {
   };
 }
 
-export function readyPcToBaseDto(row: ReadyPcRow): Omit<ReadyPcDto, "parts"> {
+export function readyPcToBaseDto(
+  row: ReadyPcRow,
+): Omit<ReadyPcDto, "parts" | "reviewCount"> {
   return {
     id: row.ready_pc_id,
     name: row.name,

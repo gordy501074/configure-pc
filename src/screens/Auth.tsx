@@ -4,11 +4,9 @@ import { useNavigate } from "react-router-dom";
 import { Button, Card, Field, Input, useToast } from "../components/ui";
 import { cn } from "../lib/utils";
 import { useAuth } from "../lib/auth";
-import { clearPendingAuth, getPendingAuth, setPendingAuth, uid } from "../lib/storage";
+import { requestCode, verifyCode as verifySmsCode } from "../lib/api";
 import { formatPhone, parseRuPhone } from "../lib/format";
-import type { User } from "../types";
 
-const CODE_TTL_MS = 5 * 60 * 1000;
 const RESEND_CD_MS = 30 * 1000;
 const CODE_LENGTH = 4;
 
@@ -38,18 +36,9 @@ export default function Auth() {
   const [verifying, setVerifying] = useState(false);
 
   useEffect(() => {
-    const pending = getPendingAuth();
-    if (pending && Date.now() < pending.expiresAt) {
-      setCodeInputs(padCode(pending.code));
-      setSentPhone(pending.phone);
-      setDemoCode(pending.code);
-      setMethod("phone");
-      setStep("sms");
-    }
     return () => {
       if (resendTimer.current) window.clearInterval(resendTimer.current);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const padCode = (code: string): string[] => {
@@ -57,7 +46,7 @@ export default function Auth() {
     return [...digits, ...Array(CODE_LENGTH - digits.length).fill("")];
   };
 
-  const sendCode = () => {
+  const sendCode = async () => {
     const normalized = parseRuPhone(phone);
     if (!normalized) {
       setErrors((p) => ({ ...p, phone: "Укажите корректный российский номер." }));
@@ -66,20 +55,19 @@ export default function Auth() {
     setErrors((p) => ({ ...p, phone: undefined }));
     setSending(true);
 
-    window.setTimeout(() => {
-      const code =
-        localStorage.getItem("alfagen:lastSmsCode") ??
-        String(Math.floor(1000 + Math.random() * 9000));
-      localStorage.setItem("alfagen:lastSmsCode", code);
-      setPendingAuth({ phone: normalized, code, expiresAt: Date.now() + CODE_TTL_MS });
+    try {
+      const code = await requestCode(normalized);
       setSentPhone(normalized);
       setCodeInputs(padCode(code));
       setDemoCode(code);
-      setSending(false);
       setResendIn(Math.floor(RESEND_CD_MS / 1000));
       setStep("sms");
       toast(`Демо-SMS: код ${code}`, "info");
-    }, 600);
+    } catch {
+      setErrors((p) => ({ ...p, phone: "Не удалось отправить код. Попробуйте ещё раз." }));
+    } finally {
+      setSending(false);
+    }
   };
 
   const handlePhoneSubmit = (e: FormEvent) => {
@@ -107,37 +95,29 @@ export default function Auth() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step, resendIn > 0]);
 
-  const verifyCode = (e: FormEvent | null, typed?: string) => {
+  const verifyCode = async (e: FormEvent | null, typed?: string, codeOverride?: string) => {
     if (e) e.preventDefault();
-    const pending = getPendingAuth();
-    if (!pending || Date.now() > pending.expiresAt) {
-      setErrors({ code: "Код устарел. Запросите новый." });
-      return;
-    }
     const entered = (typed ?? codeInputs.join("")).trim();
     if (entered.length < CODE_LENGTH) {
       setErrors({ code: `Введите ${CODE_LENGTH} цифры из СМС.` });
       return;
     }
-    if (entered !== pending.code) {
-      setErrors({ code: "Неверный код. Проверьте и попробуйте ещё раз." });
-      return;
-    }
     setVerifying(true);
-    window.setTimeout(() => {
-      const user: User = {
-        id: uid("usr"),
+    try {
+      const code = codeOverride ?? entered;
+      await verifySmsCode(sentPhone || phone, code);
+      await signIn({
         name: "Пользователь",
-        phone: formatPhone(pending.phone),
-        role: "customer",
-        createdAt: Date.now(),
-      };
-      clearPendingAuth();
-      localStorage.removeItem("alfagen:lastSmsCode");
-      signIn(user);
+        phone: formatPhone(sentPhone || phone),
+        role: "customer" as const,
+      });
       toast("Вы вошли в аккаунт");
       navigate("/");
-    }, 600);
+    } catch {
+      setErrors({ code: "Неверный или устаревший код." });
+    } finally {
+      setVerifying(false);
+    }
   };
 
   const handleCodeInput = (idx: number, value: string) => {
@@ -176,7 +156,7 @@ export default function Auth() {
     setErrors({});
   };
 
-  const handleEmailSubmit = (e: FormEvent) => {
+  const handleEmailSubmit = async (e: FormEvent) => {
     e.preventDefault();
     const next: typeof errors = {};
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
@@ -189,28 +169,23 @@ export default function Auth() {
     if (Object.keys(next).length) return;
 
     setVerifying(true);
-    window.setTimeout(() => {
-      const user: User = {
-        id: uid("usr"),
+    try {
+      await signIn({
         name: email.split("@")[0] || "Пользователь",
         email,
-        role: "customer",
-        createdAt: Date.now(),
-      };
-      signIn(user);
+        role: "customer" as const,
+      });
       toast("Вы вошли в аккаунт");
       navigate("/");
-    }, 700);
+    } catch {
+      setErrors((p) => ({ ...p, email: "Не удалось войти. Попробуйте ещё раз." }));
+    } finally {
+      setVerifying(false);
+    }
   };
 
-  const enterAsGuest = () => {
-    const user: User = {
-      id: uid("usr"),
-      name: "Гость",
-      role: "guest",
-      createdAt: Date.now(),
-    };
-    signIn(user);
+  const enterAsGuest = async () => {
+    await signIn({ name: "Гость", role: "guest" as const });
     toast("Вы вошли как гость", "info");
     navigate("/");
   };

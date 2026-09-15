@@ -7,8 +7,9 @@ import { ConfigPartsTable } from "../components/shared/ConfigPartsTable";
 import { InstallmentPlan } from "../components/shared/InstallmentPlan";
 import { formatPrice } from "../lib/format";
 import { configStats } from "../lib/compatibility";
-import { addOrder, uid } from "../lib/storage";
+import { saveOrderRemote } from "../lib/api";
 import { useAuth } from "../lib/auth";
+import { uid } from "../lib/session";
 import type { Config, Order, OrderItem } from "../types";
 
 interface InstallmentState {
@@ -84,31 +85,39 @@ export default function InstallmentCheckout() {
     return Object.keys(next).length === 0;
   };
 
-  const handleSubmit = (e: FormEvent) => {
+  const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     if (!validate()) return;
+    if (!user) {
+      toast("Войдите, чтобы оформить заявку", "info");
+      navigate("/auth");
+      return;
+    }
     setLoading(true);
-    window.setTimeout(() => {
-      const order: Order = {
-        id: uid("ord"),
-        createdAt: Date.now(),
-        items: items.map((it) => ({
-          kind: it.kind,
-          refId: it.refId,
-          name: it.name,
-          price: it.price,
-          count: it.count,
-        })),
-        total,
-        status: "alpha",
-        address: email,
-        userName: name.trim(),
-      };
-      addOrder(order);
-      setLoading(false);
+    const order: Order = {
+      id: uid("ord"),
+      createdAt: Date.now(),
+      items: items.map((it) => ({
+        kind: it.kind,
+        refId: it.refId,
+        name: it.name,
+        price: it.price,
+        count: it.count,
+      })),
+      total,
+      status: "alpha",
+      address: email,
+      userName: name.trim(),
+    };
+    try {
+      await saveOrderRemote(order, user.id);
       setPlaced(order);
       toast("Заявка отправлена!");
-    }, 900);
+    } catch {
+      toast("Не удалось отправить заявку", "error");
+    } finally {
+      setLoading(false);
+    }
   };
 
   const count = 4;

@@ -1,29 +1,28 @@
 import type { Config, Review } from "../types";
+import { uid } from "./session";
 import {
-  addReview,
-  deleteConfig,
-  getReviews,
-  saveConfig,
-  uid,
-} from "./storage";
-
+  deleteConfigRemote,
+  fetchReviews,
+  saveConfigRemote,
+  submitReviewRemote,
+} from "./api";
 export interface SharedResult {
   ok: boolean;
   message: string;
 }
 
-/** Save (or update) a config in user profile storage. */
-export function saveConfigAction(config: Config): SharedResult {
-  saveConfig(config);
+/** Save (or update) a config in the user's profile stored in the database. */
+export async function saveConfigAction(config: Config, userId: string): Promise<SharedResult> {
+  await saveConfigRemote(config, userId);
   return {
     ok: true,
     message: `Сохранено в профиль: «${config.name}»`,
   };
 }
 
-/** Delete a config from storage by id. */
-export function removeConfigAction(id: string): SharedResult {
-  deleteConfig(id);
+/** Delete a config from the database by id. */
+export async function removeConfigAction(id: string): Promise<SharedResult> {
+  await deleteConfigRemote(id);
   return { ok: true, message: "Конфигурация удалена" };
 }
 
@@ -50,13 +49,13 @@ export async function shareAction(title: string, url: string): Promise<SharedRes
   }
 }
 
-/** Submit a review for an entity. */
-export function submitReview(
+/** Submit a review for an entity to the database. */
+export async function submitReview(
   entityId: string,
   author: string,
   rating: number,
   text: string,
-): Review[] {
+): Promise<Review[]> {
   const review: Review = {
     id: uid("rev"),
     entityId,
@@ -65,10 +64,11 @@ export function submitReview(
     text,
     createdAt: Date.now(),
   };
-  return addReview(review);
+  await submitReviewRemote(entityId, author, rating, text, review.id);
+  return listReviews(entityId);
 }
 
-/** Aggregate existing reviews for an entity, defaulting to seeded data handled by screens. */
-export function listReviews(entityId: string): Review[] {
-  return getReviews().filter((r) => r.entityId === entityId);
+/** Fetch existing reviews for an entity (seeded + user) from the database. */
+export async function listReviews(entityId: string): Promise<Review[]> {
+  return fetchReviews(entityId);
 }

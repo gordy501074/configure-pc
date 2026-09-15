@@ -34,12 +34,12 @@ export function ReviewDialog({
     onClose();
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!text.trim()) {
       setInvalid(true);
       return;
     }
-    submitReview(entityId, author, rating, text.trim());
+    await submitReview(entityId, author, rating, text.trim());
     toast("Спасибо! Отзыв сохранён.");
     onSubmitted?.();
     handleClose();

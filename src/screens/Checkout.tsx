@@ -14,8 +14,9 @@ import {
 import { ConfigPartsTable } from "../components/shared/ConfigPartsTable";
 import { formatPrice } from "../lib/format";
 import { configStats } from "../lib/compatibility";
-import { addOrder, uid } from "../lib/storage";
+import { saveOrderRemote } from "../lib/api";
 import { useAuth } from "../lib/auth";
+import { uid } from "../lib/session";
 import type { Config, Order } from "../types";
 
 interface CheckoutState {
@@ -62,31 +63,39 @@ export default function Checkout() {
     return Object.keys(next).length === 0;
   };
 
-  const handleSubmit = (e: FormEvent) => {
+  const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     if (!validate()) return;
+    if (!user) {
+      toast("Войдите, чтобы оформить заказ", "info");
+      navigate("/auth");
+      return;
+    }
     setLoading(true);
-    window.setTimeout(() => {
-      const order: Order = {
-        id: uid("ord"),
-        createdAt: Date.now(),
-        items: items.map((it) => ({
-          kind: it.kind,
-          refId: it.refId ?? config?.id ?? "",
-          name: it.name ?? config?.name ?? "",
-          price: it.price ?? 0,
-          count: it.count ?? 1,
-        })),
-        total,
-        status: "new",
-        address,
-        userName: name.trim(),
-      };
-      addOrder(order);
-      setLoading(false);
+    const order: Order = {
+      id: uid("ord"),
+      createdAt: Date.now(),
+      items: items.map((it) => ({
+        kind: it.kind,
+        refId: it.refId ?? config?.id ?? "",
+        name: it.name ?? config?.name ?? "",
+        price: it.price ?? 0,
+        count: it.count ?? 1,
+      })),
+      total,
+      status: "new",
+      address,
+      userName: name.trim(),
+    };
+    try {
+      await saveOrderRemote(order, user.id);
       setPlaced(order);
       toast("Заказ оформлен!");
-    }, 900);
+    } catch {
+      toast("Не удалось оформить заказ", "error");
+    } finally {
+      setLoading(false);
+    }
   };
 
   if (placed) {

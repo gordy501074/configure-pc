@@ -5,8 +5,7 @@ import type {
   Part,
   SurveyAnswers,
 } from "../types";
-import { components } from "../data/mock";
-import { uid } from "./storage";
+import { uid } from "./session";
 
 type Priority = SurveyAnswers["priority"];
 
@@ -35,6 +34,7 @@ const EMPTY: Record<ComponentCategory, Part | null> = {
 /** Pick the best part in a category by score (optionally filtered). */
 function pick(
   category: ComponentCategory,
+  components: Record<ComponentCategory, Part[]>,
   score: (p: Part) => number,
 ): Part | null {
   let best: Part | null = null;
@@ -68,7 +68,10 @@ function parseRamGb(p: Part): number {
  * Auto-build a configuration from survey answers.
  * Returns a full Config (source "auto") based on budget, usage, ecosystem, priority.
  */
-export function buildRecommendation(answers: SurveyAnswers): Config {
+export function buildRecommendation(
+  answers: SurveyAnswers,
+  components: Record<ComponentCategory, Part[]>,
+): Config {
   const chosen: Record<ComponentCategory, Part | null> = { ...EMPTY };
   const { budget, usage, ecosystem: eco, priority } = answers;
 
@@ -78,6 +81,7 @@ export function buildRecommendation(answers: SurveyAnswers): Config {
   chosen.cpu =
     pick(
       "cpu",
+      components,
       (p) => (cpuPool.includes(p) ? budgetScore(p, budget * 0.28, priority) : -Infinity),
     ) ?? cpuPool[0] ?? components.cpu[0];
 
@@ -90,9 +94,8 @@ export function buildRecommendation(answers: SurveyAnswers): Config {
   const ramPool = chosen.motherboard
     ? components.ram.filter((r) => r.ramType === chosen.motherboard!.ramType && parseRamGb(r) >= ramTarget)
     : components.ram;
-  chosen.ram = pick(
-    "ram",
-    (p) => (ramPool.includes(p) ? parseRamGb(p) : -Infinity),
+  chosen.ram = pick("ram", components, (p) =>
+    ramPool.includes(p) ? parseRamGb(p) : -Infinity,
   );
 
   const baseCost =
@@ -103,6 +106,7 @@ export function buildRecommendation(answers: SurveyAnswers): Config {
   chosen.gpu =
     pick(
       "gpu",
+      components,
       (p) =>
         p.price <= gpuBudget
           ? (p.benches?.[0]?.score ?? 0) * (priority === "price" ? 0.4 : 1)

@@ -1,7 +1,7 @@
--- Confi SQLite schema (STRICT, WAL). Version 1.
+-- Confi SQLite schema (STRICT, WAL). Version 2.
 -- DDL per plan section 2. Applied idempotently by db:init / db:seed.
 
-PRAGMA user_version = 1;
+PRAGMA user_version = 2;
 PRAGMA journal_mode = WAL;
 
 CREATE TABLE IF NOT EXISTS part (
@@ -121,6 +121,28 @@ CREATE TABLE IF NOT EXISTS app_setting (
   FOREIGN KEY (user_id) REFERENCES user_account(user_id) ON DELETE CASCADE
 ) STRICT;
 
+-- Active auth sessions (replaces alfagen:session / client-side session).
+CREATE TABLE IF NOT EXISTS auth_session (
+  session_id TEXT PRIMARY KEY,
+  user_id    TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  FOREIGN KEY (user_id) REFERENCES user_account(user_id) ON DELETE CASCADE
+) STRICT;
+
+-- Pending phone/SMS verification (replaces alfagen:pendingAuth).
+CREATE TABLE IF NOT EXISTS auth_pending (
+  phone      TEXT PRIMARY KEY,
+  code       TEXT NOT NULL,
+  expires_at TEXT NOT NULL
+) STRICT;
+
+-- Generic key/value store for small app state (replaces remaining alfagen:* keys).
+CREATE TABLE IF NOT EXISTS kv_store (
+  k          TEXT PRIMARY KEY,
+  v          TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+) STRICT;
+
 -- Indexes (plan section 2)
 CREATE INDEX IF NOT EXISTS idx_ready_pc_usage  ON ready_pc(usage);
 CREATE INDEX IF NOT EXISTS idx_ready_pc_price  ON ready_pc(price_kopecks);
@@ -131,3 +153,5 @@ CREATE INDEX IF NOT EXISTS idx_config_updated  ON config(updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_order_user      ON order_header(user_id);
 CREATE INDEX IF NOT EXISTS idx_review_ready    ON review(ready_pc_id);
 CREATE INDEX IF NOT EXISTS idx_review_entity   ON review(entity_slug);
+CREATE INDEX IF NOT EXISTS idx_session_user    ON auth_session(user_id);
+CREATE INDEX IF NOT EXISTS idx_pending_phone   ON auth_pending(phone);

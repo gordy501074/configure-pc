@@ -22,12 +22,15 @@ const gaming = await fetch(base + "/api/ready/ready-gaming").then(j);
 check("ready-gaming parts", gaming.parts.length === 8, { price: gaming.price });
 
 // session
-const user = await fetch(base + "/api/session", {
+const session = await fetch(base + "/api/session", {
   method: "POST",
   headers: jh,
   body: JSON.stringify({ id: "usr-test", name: "Тест", role: "customer", phone: "79990001122" }),
 }).then(j);
-check("session ok", user.id === "usr-test" && user.name === "Тест");
+check("session ok", session.user?.id === "usr-test" && session.user.name === "Тест" && !!session.sessionId);
+// session restore
+const restored = await fetch(base + "/api/session/" + session.sessionId).then(j);
+check("session restore", restored.user?.id === "usr-test" && restored.sessionId === session.sessionId);
 
 // config save + read
 const cfg = {

@@ -7,8 +7,9 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { getSettings, setSettings } from "./storage";
 import type { AppSettings } from "../types";
+import { fetchSettings, saveSettingsRemote } from "./api";
+import { useAuth } from "./auth";
 
 interface ThemeCtx {
   theme: AppSettings["theme"];
@@ -25,26 +26,47 @@ function applyTheme(theme: AppSettings["theme"]) {
 }
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
-  const [theme, setThemeState] = useState<AppSettings["theme"]>(() =>
-    getSettings().theme,
-  );
+  const { user } = useAuth();
+  const [theme, setThemeState] = useState<AppSettings["theme"]>("light");
+
+  // Load theme once we know the acting user.
+  const userId = user?.id;
+  useEffect(() => {
+    if (!userId) return;
+    let cancelled = false;
+    fetchSettings(userId).then((s) => {
+      if (cancelled) return;
+      setThemeState(s.theme);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [userId]);
 
   useEffect(() => {
     applyTheme(theme);
   }, [theme]);
 
-  const setTheme = useCallback((t: AppSettings["theme"]) => {
-    setThemeState(t);
-    setSettings({ ...getSettings(), theme: t });
-  }, []);
+  const persist = useCallback(
+    (next: AppSettings["theme"]) => {
+      setThemeState(next);
+      if (userId) saveSettingsRemote(userId, { theme: next }).catch(() => {});
+    },
+    [userId],
+  );
+
+  const setTheme = useCallback(
+    (t: AppSettings["theme"]) => persist(t),
+    [persist],
+  );
 
   const toggleTheme = useCallback(() => {
     setThemeState((prev) => {
       const next = prev === "dark" ? "light" : "dark";
-      setSettings({ ...getSettings(), theme: next });
+      persist(next);
       return next;
     });
-  }, []);
+  }, [persist]);
 
   const value = useMemo<ThemeCtx>(
     () => ({ theme, toggleTheme, setTheme }),

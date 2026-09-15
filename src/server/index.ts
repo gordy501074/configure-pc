@@ -1,13 +1,13 @@
 // Confi SQLite backend API (Express + better-sqlite3).
 //
-// Feature flag: DB_USE=sqlite selects this SQLite server backend. The client
-// still ships a localStorage fallback (DB_USE unset) so the SPA remains
-// usable standalone. This module exposes the catalog and user-data endpoints.
+// This is the single server-side data store. The SPA client talks to these
+// endpoints (via the Vite /api proxy) for the catalog, user data and auth.
 
 import express from "express";
 import cors from "cors";
 import { createCatalogRepository } from "./repository/catalog.ts";
 import { createUserRepository } from "./repository/user-data.ts";
+import { createAppStateRepository } from "./repository/app-state.ts";
 import { openDb } from "./db.ts";
 import type { SaveConfigInput, SaveOrderInput, SaveReviewInput } from "./repository/user-data.ts";
 
@@ -18,6 +18,7 @@ app.use(express.json());
 const db = openDb();
 const catalog = createCatalogRepository(db);
 const userData = createUserRepository(db);
+const appState = createAppStateRepository(db);
 
 /** Resolve the acting user id: explicit body/query user or surrogate session. */
 function actorId(req: express.Request): string {
@@ -65,14 +66,29 @@ app.post("/api/session", (req, res) => {
     createdAt?: number;
   };
   const user = userData.upsertUser({
-    id: body.id ?? "usr-localstorage-import",
+    id: body.id,
     name: body.name ?? "Гость",
     email: body.email,
     phone: body.phone,
     role: body.role ?? "customer",
     createdAt: body.createdAt,
   });
-  res.json(user);
+  const sessionId = appState.createSession(user.id);
+  res.json({ user, sessionId });
+});
+
+app.post("/api/session/logout", (req, res) => {
+  const body = req.body as { sessionId?: string };
+  if (body.sessionId) appState.deleteSession(body.sessionId);
+  res.status(204).end();
+});
+
+app.get("/api/session/:id", (req, res) => {
+  const userId = appState.getSessionUser(req.params.id);
+  if (!userId) return res.status(404).json({ error: "session not found" });
+  const user = userData.getUser(userId);
+  if (!user) return res.status(404).json({ error: "user not found" });
+  res.json({ user, sessionId: req.params.id });
 });
 
 app.get("/api/user/:id", (req, res) => {
@@ -155,6 +171,46 @@ app.patch("/api/settings", (req, res) => {
     notifications: body.notifications,
   });
   res.json(s);
+});
+
+// ---- Onboarding ----
+app.get("/api/onboarding", (_req, res) => {
+  res.json({ onboarded: appState.isOnboarded() });
+});
+
+app.post("/api/onboarding", (req, res) => {
+  const body = req.body as { onboarded?: boolean };
+  appState.setOnboarded(body.onboarded !== false);
+  res.json({ onboarded: appState.isOnboarded() });
+});
+
+// ---- Auth (mock phone/SMS) ----
+app.post("/api/auth/request-code", (req, res) => {
+  const body = req.body as { phone?: string };
+  const phone = String(body.phone ?? "");
+  if (!phone) return res.status(400).json({ error: "phone required" });
+  const code = String(Math.floor(1000 + Math.random() * 9000));
+  appState.setPendingAuth({
+    phone,
+    code,
+    expiresAt: Date.now() + 5 * 60 * 1000,
+  });
+  res.json({ ok: true, demoCode: code, expiresIn: 5 * 60 });
+});
+
+app.post("/api/auth/verify", (req, res) => {
+  const body = req.body as { phone?: string; code?: string };
+  const phone = String(body.phone ?? "");
+  const code = String(body.code ?? "");
+  const pending = appState.getPendingAuth(phone);
+  if (!pending || Date.now() > pending.expiresAt) {
+    return res.status(400).json({ error: "code_expired" });
+  }
+  if (pending.code !== code) {
+    return res.status(400).json({ error: "code_wrong" });
+  }
+  appState.clearPendingAuth(phone);
+  res.json({ ok: true });
 });
 
 // ---- Health ----

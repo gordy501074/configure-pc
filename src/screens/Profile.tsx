@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
 import {
@@ -22,14 +22,14 @@ import { cn } from "../lib/utils";
 import { configStats } from "../lib/compatibility";
 import { formatAgo, formatDate, formatPrice } from "../lib/format";
 import {
-  deleteConfig,
-  getConfigs,
-  getOrders,
-  getReviews,
-  getSettings,
-  setSettings,
-  deleteOrder,
-} from "../lib/storage";
+  deleteConfigRemote,
+  deleteOrderRemote,
+  fetchAllReviews,
+  fetchConfigs,
+  fetchOrders,
+  fetchSettings,
+  saveSettingsRemote,
+} from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { useTheme } from "../lib/theme";
 import type { AppSettings, Config, Order, Review } from "../types";
@@ -53,37 +53,48 @@ export default function Profile() {
   const [configs, setConfigs] = useState<Config[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
   const [reviews, setReviews] = useState<Review[]>([]);
-  const [settings, setSettingsLocal] = useState<AppSettings>(getSettings());
+  const [settings, setSettingsLocal] = useState<AppSettings>({ theme: "light", notifications: true });
 
   const active: Tab = (TABS.find((t) => t.key === tab)?.key ?? "configs") as Tab;
 
+  const reload = useCallback(async () => {
+    if (!user) return;
+    const [cfgs, ords, revs, setts] = await Promise.all([
+      fetchConfigs(user.id),
+      fetchOrders(user.id),
+      fetchAllReviews(),
+      fetchSettings(user.id),
+    ]);
+    setConfigs(cfgs);
+    setOrders(ords);
+    setReviews(revs.filter((r) => r.author === user.name));
+    setSettingsLocal(setts);
+    setLoadState("done");
+  }, [user]);
+
   useEffect(() => {
     setLoadState("loading");
-    const t = window.setTimeout(() => {
-      setConfigs(getConfigs());
-      setOrders(getOrders());
-      setReviews(getReviews());
-      setLoadState("done");
-    }, 300);
-    return () => window.clearTimeout(t);
-  }, [tab]);
+    void reload();
+  }, [reload, tab]);
 
-  const updateSettings = (patch: Partial<AppSettings>) => {
-    const next = { ...getSettings(), ...patch };
+  const updateSettings = async (patch: Partial<AppSettings>) => {
+    if (!user) return;
+    const next = { ...settings, ...patch };
     setSettingsLocal(next);
-    setSettings(next);
+    if (patch.theme !== undefined) setTheme(patch.theme);
+    await saveSettingsRemote(user.id, patch);
     toast("Настройки сохранены");
   };
 
-  const handleDeleteConfig = (id: string) => {
-    deleteConfig(id);
-    setConfigs(getConfigs());
+  const handleDeleteConfig = async (id: string) => {
+    await deleteConfigRemote(id);
+    setConfigs(await fetchConfigs(user!.id));
     toast("Конфигурация удалена", "info");
   };
 
-  const handleCancelOrder = (id: string) => {
-    deleteOrder(id);
-    setOrders(getOrders());
+  const handleCancelOrder = async (id: string) => {
+    await deleteOrderRemote(id);
+    setOrders(await fetchOrders(user!.id));
     toast("Заказ отменён", "info");
   };
 

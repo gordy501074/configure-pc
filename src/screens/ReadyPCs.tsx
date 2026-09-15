@@ -15,10 +15,10 @@ import {
   Skeleton,
 } from "../components/ui";
 import { ReadyPcCard } from "../components/shared/ReadyPcCard";
-import { readyPcs } from "../data/mock";
+import { fetchReadyPcs } from "../lib/api";
 import { USAGE_LABELS } from "../lib/format";
 import { cn } from "../lib/utils";
-import type { Usage } from "../types";
+import type { ReadyPc, Usage } from "../types";
 
 type SortKey = "price-asc" | "price-desc" | "rating";
 
@@ -30,11 +30,10 @@ interface Filters {
   sort: SortKey;
 }
 
-const BRANDS = Array.from(new Set(readyPcs.map((p) => p.brand)));
-
 export default function ReadyPCs() {
   const [params, setParams] = useSearchParams();
   const [loadState, setLoadState] = useState<"loading" | "done">("loading");
+  const [pcs, setPcs] = useState<ReadyPc[]>([]);
 
   const [filters, setFilters] = useState<Filters>(() => ({
     usage: (params.get("usage") as Filters["usage"]) || "all",
@@ -46,12 +45,21 @@ export default function ReadyPCs() {
 
   useEffect(() => {
     setLoadState("loading");
-    const t = window.setTimeout(() => setLoadState("done"), 300);
-    return () => window.clearTimeout(t);
-  }, [params]);
+    let cancelled = false;
+    fetchReadyPcs().then((list) => {
+      if (cancelled) return;
+      setPcs(list);
+      setLoadState("done");
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const BRANDS = useMemo(() => Array.from(new Set(pcs.map((p) => p.brand))), [pcs]);
 
   const filtered = useMemo(() => {
-    let list = [...readyPcs];
+    let list = [...pcs];
     if (filters.usage !== "all") list = list.filter((p) => p.usage === filters.usage);
     if (filters.brand !== "all") list = list.filter((p) => p.brand === filters.brand);
     const min = Number(filters.min);
@@ -70,7 +78,7 @@ export default function ReadyPCs() {
         break;
     }
     return list;
-  }, [filters]);
+  }, [pcs, filters]);
 
   const applyFilters = (next: Partial<Filters>) => {
     const merged = { ...filters, ...next };

@@ -1,7 +1,7 @@
-import { useMemo } from "react";
+import { useEffect, useState } from "react";
 
 import { Badge, Button, Modal, Skeleton } from "../ui";
-import { components } from "../../data/mock";
+import { fetchParts } from "../../lib/api";
 import { CATEGORY_LABELS, formatPrice, formatWatts } from "../../lib/format";
 import { checkPartCompatibility } from "../../lib/compatibility";
 import type { ComponentCategory, Part } from "../../types";
@@ -21,7 +21,23 @@ export function ComponentPicker({
   chosen,
   onSelect,
 }: ComponentPickerProps) {
-  const list = useMemo(() => components[category] ?? [], [category]);
+  const [parts, setParts] = useState<Part[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    setLoading(true);
+    setParts([]);
+    fetchParts(category).then((list) => {
+      if (cancelled) return;
+      setParts(list);
+      setLoading(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, category]);
 
   if (!open) return null;
 
@@ -40,10 +56,10 @@ export function ComponentPicker({
       }
     >
       <div className="flex flex-col gap-2">
-        {list.length === 0 ? (
+        {loading || parts.length === 0 ? (
           <Skeleton className="h-[60px] w-full" />
         ) : (
-          list.map((p) => {
+          parts.map((p) => {
             const issues = incompat(p);
             const blocked = issues.length > 0;
             return (

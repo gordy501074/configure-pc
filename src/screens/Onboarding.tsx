@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 
 import { Button, Card } from "../components/ui";
 import { cn } from "../lib/utils";
-import { setOnboarded } from "../lib/storage";
+import { setOnboarded as saveOnboarded } from "../lib/api";
 
 const SLIDES = [
   {
@@ -29,12 +29,13 @@ export default function Onboarding() {
   const slide = SLIDES[step];
   const last = step === SLIDES.length - 1;
 
-  const finish = () => {
-    setOnboarded(true);
+  const finish = async () => {
+    await saveOnboarded(true);
     navigate("/");
   };
 
-  const next = () => (last ? finish() : setStep((s) => s + 1));
+  const handleNext = () => (last ? void finish() : setStep((s) => s + 1));
+  const handleSkip = () => void finish();
 
   return (
     <div className="flex flex-1 items-center justify-center px-4 py-10">
@@ -59,13 +60,13 @@ export default function Onboarding() {
 
         <div className="flex w-full items-center justify-between">
           {!last ? (
-            <Button variant="ghost" onClick={finish}>
+            <Button variant="ghost" onClick={handleSkip}>
               Пропустить
             </Button>
           ) : (
             <span />
           )}
-          <Button size="lg" onClick={next}>
+          <Button size="lg" onClick={handleNext}>
             {last ? "Начать" : "Далее"}
           </Button>
         </div>
