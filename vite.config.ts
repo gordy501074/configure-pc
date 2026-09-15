@@ -23,4 +23,7 @@ export default defineConfig({
     target: "es2020",
     sourcemap: false,
   },
+  define: {
+    __APP_BUILD__: JSON.stringify(process.env.APP_BUILD ?? "dev"),
+  },
 });

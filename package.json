@@ -15,7 +15,10 @@
     "db:test:api": "node db/api-e2e.mjs",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.server.json",
     "server": "node --experimental-strip-types src/server/index.ts",
-    "server:dev": "node --experimental-strip-types --watch src/server/index.ts"
+    "server:dev": "node --experimental-strip-types --watch src/server/index.ts",
+    "db:analytics": "node db/analytics.js",
+    "db:analytics:recent": "node db/analytics.js recent",
+    "db:analytics:flows": "node db/analytics.js flows"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.23",

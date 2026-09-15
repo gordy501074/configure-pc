@@ -8,6 +8,7 @@ import cors from "cors";
 import { createCatalogRepository } from "./repository/catalog.ts";
 import { createUserRepository } from "./repository/user-data.ts";
 import { createAppStateRepository } from "./repository/app-state.ts";
+import { createAnalyticsRepository, type AnalyticsEvent } from "./repository/analytics.ts";
 import { openDb } from "./db.ts";
 import type { SaveConfigInput, SaveOrderInput, SaveReviewInput } from "./repository/user-data.ts";
 
@@ -19,6 +20,7 @@ const db = openDb();
 const catalog = createCatalogRepository(db);
 const userData = createUserRepository(db);
 const appState = createAppStateRepository(db);
+const analytics = createAnalyticsRepository(db);
 
 /** Resolve the acting user id: explicit body/query user or surrogate session. */
 function actorId(req: express.Request): string {
@@ -215,7 +217,26 @@ app.post("/api/auth/verify", (req, res) => {
 
 // ---- Health ----
 app.get("/api/health", (_req, res) => {
-  res.json({ ok: true, db: "sqlite" });
+  res.json({ ok: true, db: "sqlite", analyticsEvents: analytics.count() });
+});
+
+// ---- Analytics ----
+// Ingests anonymized client events. Client is responsible for redaction,
+// batching and offline queueing; server applies a light size guard.
+app.post("/api/analytics", (req, res) => {
+  const body = req.body as { events?: AnalyticsEvent[] };
+  const events = Array.isArray(body?.events) ? body.events : [];
+  if (events.length === 0) return res.json({ ok: true, stored: 0 });
+  const maxPayloadBytes = 64 * 1024;
+  const clean = events.map((e) => ({
+    ...e,
+    payload:
+      e.payload && JSON.stringify(e.payload).length <= maxPayloadBytes
+        ? e.payload
+        : { truncated: true } as Record<string, unknown>,
+  }));
+  const stored = analytics.append(clean);
+  res.json({ ok: true, stored });
 });
 
 const PORT = Number(process.env.PORT ?? 8787);

@@ -27,5 +27,6 @@ export { Breadcrumbs } from "./Breadcrumbs";
 export type { Crumb } from "./Breadcrumbs";
 export { StarRating } from "./StarRating";
 export { EmptyState } from "./EmptyState";
+export { ErrorBoundary } from "./ErrorBoundary";
 export { Tabs, TabsList, TabsTrigger, TabsContent } from "./Tabs";
 export { Switch } from "./Switch";

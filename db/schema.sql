@@ -143,6 +143,25 @@ CREATE TABLE IF NOT EXISTS kv_store (
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 ) STRICT;
 
+-- Telemetry: anonymized user-action events ingested from the SPA analytics client.
+CREATE TABLE IF NOT EXISTS analytics_events (
+  event_id   INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts         TEXT NOT NULL,
+  session_id TEXT,
+  user_id    TEXT,
+  event      TEXT NOT NULL,
+  level      TEXT NOT NULL DEFAULT 'info' CHECK (level IN ('debug','info','warn','error','critical')),
+  route      TEXT,
+  payload    TEXT NOT NULL DEFAULT '{}',
+  ua         TEXT,
+  build      TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS idx_analytics_ts    ON analytics_events(ts);
+CREATE INDEX IF NOT EXISTS idx_analytics_event ON analytics_events(event);
+CREATE INDEX IF NOT EXISTS idx_analytics_user  ON analytics_events(user_id);
+
 -- Indexes (plan section 2)
 CREATE INDEX IF NOT EXISTS idx_ready_pc_usage  ON ready_pc(usage);
 CREATE INDEX IF NOT EXISTS idx_ready_pc_price  ON ready_pc(price_kopecks);
