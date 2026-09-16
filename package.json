@@ -17,6 +17,8 @@
     "db:test:api": "node db/api-e2e.mjs",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.server.json",
     "test:typecheck": "tsc -p tsconfig.tests.json",
+    "test:unit": "node --experimental-strip-types --test \"tests/unit/*.test.ts\"",
+    "test:unit:cov": "node --experimental-strip-types --experimental-test-coverage --test-coverage-include=\"src/lib/format.ts\" --test-coverage-include=\"src/lib/compatibility.ts\" --test-coverage-include=\"src/lib/analytics/redact.ts\" --test-coverage-lines=99 --test \"tests/unit/*.test.ts\"",
     "server": "node --experimental-strip-types src/server/index.ts",
     "server:dev": "node --experimental-strip-types --watch src/server/index.ts",
     "db:analytics": "node db/analytics.js",
@@ -26,7 +28,7 @@
     "test:smoke": "npm run test:init:db && playwright test --grep @smoke",
     "test:smoke:mobile": "playwright test --project mobile-chrome --grep @smoke",
     "test:regression": "npm run test:init:db && playwright test tests/regression",
-    "test:all": "npm run test:init:db && playwright test",
+    "test:all": "npm run test:unit:cov && npm run test:init:db && playwright test",
     "test:gen:from-logs": "node --experimental-strip-types scripts/gen-tests-from-logs.ts",
     "test:report": "playwright show-report"
   },
