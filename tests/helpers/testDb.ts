@@ -64,9 +64,7 @@ function seed(db: Database.Database): void {
   const upsertAccount = db.prepare(`
     INSERT INTO user_account (user_id, name, email, phone, role, company)
     VALUES (@user_id, @name, @email, @phone, @role, @company)
-    ON CONFLICT(user_id) DO UPDATE SET
-      email=excluded.email, phone=excluded.phone,
-      role=excluded.role, company=excluded.company
+    ON CONFLICT(user_id) DO NOTHING
   `);
   const insertSellerBrand = db.prepare(`
     INSERT INTO seller_brand (seller_id, brand)
