@@ -41,7 +41,7 @@ const FEATURED = [
 export default function Home() {
   return (
     <div className="container">
-      <section className="flex flex-col items-center gap-4 py-16 text-center md:py-24">
+      <section className="flex flex-col items-center gap-4 py-8 text-center md:py-12">
         <h1 className="max-w-[18ch] text-3xl font-bold leading-tight md:text-5xl">
           Соберите компьютер, который решает ваши задачи
         </h1>

@@ -51,7 +51,11 @@ export function Navbar() {
   useEffect(() => {
     if (!settingsOpen) return;
     const onDown = (e: MouseEvent) => {
-      if (settingsRef.current && !settingsRef.current.contains(e.target as Node)) {
+      const target = e.target as Node | null;
+      if (target instanceof Element && target.closest('[data-slot="select-content"]')) {
+        return;
+      }
+      if (settingsRef.current && !settingsRef.current.contains(target)) {
         setSettingsOpen(false);
       }
     };
