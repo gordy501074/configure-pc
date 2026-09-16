@@ -9,14 +9,10 @@ import {
   EmptyState,
   Field,
   Input,
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
+  Modal,
   Skeleton,
   StarRating,
-  Switch,
+  Textarea,
   useToast,
 } from "../components/ui";
 import { ConfigPartsTable } from "../components/shared/ConfigPartsTable";
@@ -24,28 +20,37 @@ import { cn } from "../lib/utils";
 import { configStats } from "../lib/compatibility";
 import { formatAgo, formatDate, formatPrice } from "../lib/format";
 import {
+  addSellerBrand,
   deleteConfigRemote,
   deleteOrderRemote,
+  deleteSellerBrand,
   fetchAllReviews,
   fetchConfigs,
   fetchOrders,
   fetchSellerBrands,
-  fetchSettings,
-  saveSettingsRemote,
   updateProfile,
+  updateSellerBrand,
 } from "../lib/api";
 import { useAuth } from "../lib/auth";
-import { useTheme } from "../lib/theme";
-import type { AppSettings, Config, Order, Review } from "../types";
+import type { Config, Order, Review, SellerBrand } from "../types";
+import Admin from "./Admin";
 
-type Tab = "configs" | "orders" | "reviews" | "settings";
+type Tab = "configs" | "orders" | "reviews" | "admin-users" | "brands";
 
-const TABS: { key: Tab; label: string }[] = [
-  { key: "configs", label: "Конфигурации" },
-  { key: "orders", label: "Заказы" },
-  { key: "reviews", label: "Отзывы" },
-  { key: "settings", label: "Настройки" },
-];
+interface TabDef {
+  key: Tab;
+  label: string;
+}
+
+function tabsForRole(role: string): TabDef[] {
+  if (role === "admin") return [{ key: "admin-users", label: "Администрирование пользователей" }];
+  if (role === "seller") return [{ key: "brands", label: "Бренды" }];
+  return [
+    { key: "configs", label: "Конфигурации" },
+    { key: "orders", label: "Заказы" },
+    { key: "reviews", label: "Отзывы" },
+  ];
+}
 
 function roleMeta(role: string): { label: string; variant: "success" | "warning" | "info" | "neutral" } {
   if (role === "seller") return { label: "Продавец", variant: "warning" };
@@ -58,50 +63,59 @@ export default function Profile() {
   const navigate = useNavigate();
   const { toast } = useToast();
   const { user, refreshUser } = useAuth();
-  const { theme, setTheme } = useTheme();
   const [loadState, setLoadState] = useState<"loading" | "done">("loading");
   const [configs, setConfigs] = useState<Config[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
   const [reviews, setReviews] = useState<Review[]>([]);
-  const [settings, setSettingsLocal] = useState<AppSettings>({ theme: "light", notifications: true });
-  const [brands, setBrands] = useState<string[]>([]);
+  const [brands, setBrands] = useState<SellerBrand[]>([]);
   const [editName, setEditName] = useState("");
   const [editCompany, setEditCompany] = useState("");
   const [editing, setEditing] = useState(false);
   const [savingProfile, setSavingProfile] = useState(false);
 
-  const active: Tab = (TABS.find((t) => t.key === tab)?.key ?? "configs") as Tab;
+  // Brand modal state.
+  const [brandModalOpen, setBrandModalOpen] = useState(false);
+  const [brandEditIndex, setBrandEditIndex] = useState<number | null>(null);
+  const [brandName, setBrandName] = useState("");
+  const [brandDescription, setBrandDescription] = useState("");
+
+  const tabs: TabDef[] = tabsForRole(user?.role ?? "customer");
+  const activeTab: Tab = tabs.some((t) => t.key === tab) ? (tab as Tab) : tabs[0]?.key ?? "configs";
 
   const reload = useCallback(async () => {
     if (!user) return;
-    const [cfgs, ords, revs, setts, br] = await Promise.all([
-      fetchConfigs(user.id),
-      fetchOrders(user.id),
-      fetchAllReviews(),
-      fetchSettings(user.id),
-      user.role === "seller" ? fetchSellerBrands(user.id) : Promise.resolve([]),
-    ]);
-    setConfigs(cfgs);
-    setOrders(ords);
-    setReviews(revs.filter((r) => r.author === user.name));
-    setSettingsLocal(setts);
-    setBrands(br);
+    if (user.role === "admin") {
+      setLoadState("done");
+      return;
+    }
+    if (user.role === "seller") {
+      try {
+        setBrands(await fetchSellerBrands(user.id));
+      } catch {
+        toast("Не удалось загрузить бренды", "error");
+      }
+      setLoadState("done");
+      return;
+    }
+    try {
+      const [cfgs, ords, revs] = await Promise.all([
+        fetchConfigs(user.id),
+        fetchOrders(user.id),
+        fetchAllReviews(),
+      ]);
+      setConfigs(cfgs);
+      setOrders(ords);
+      setReviews(revs.filter((r) => r.author === user.name));
+    } catch {
+      toast("Не удалось загрузить данные профиля", "error");
+    }
     setLoadState("done");
-  }, [user]);
+  }, [user, toast]);
 
   useEffect(() => {
     setLoadState("loading");
     void reload();
   }, [reload, tab]);
-
-  const updateSettings = async (patch: Partial<AppSettings>) => {
-    if (!user) return;
-    const next = { ...settings, ...patch };
-    setSettingsLocal(next);
-    if (patch.theme !== undefined) setTheme(patch.theme);
-    await saveSettingsRemote(user.id, patch);
-    toast("Настройки сохранены");
-  };
 
   const handleDeleteConfig = async (id: string) => {
     await deleteConfigRemote(id);
@@ -133,7 +147,6 @@ export default function Profile() {
         name: editName.trim(),
         ...(user.role === "seller" ? { company: editCompany } : {}),
       });
-      // Reflect the updated contacts/name; role stays unchanged.
       await refreshUser();
       await reload();
       toast("Аккаунт обновлён");
@@ -145,12 +158,68 @@ export default function Profile() {
     }
   };
 
+  const openAddBrand = () => {
+    setBrandEditIndex(null);
+    setBrandName("");
+    setBrandDescription("");
+    setBrandModalOpen(true);
+  };
+
+  const openEditBrand = (index: number, b: SellerBrand) => {
+    setBrandEditIndex(index);
+    setBrandName(b.brand);
+    setBrandDescription(b.description ?? "");
+    setBrandModalOpen(true);
+  };
+
+  const handleSaveBrand = async () => {
+    const sellerId = user?.id;
+    if (!sellerId || !brandName.trim()) {
+      toast("Укажите название бренда", "error");
+      return;
+    }
+    try {
+      if (brandEditIndex !== null) {
+        const original = brands[brandEditIndex];
+        await updateSellerBrand(sellerId, original.brand, {
+          brand: brandName.trim(),
+          description: brandDescription.trim() || undefined,
+        });
+        toast("Бренд обновлён");
+      } else {
+        await addSellerBrand(sellerId, brandName.trim(), brandDescription.trim() || undefined);
+        toast("Бренд добавлен");
+      }
+      setBrands(await fetchSellerBrands(sellerId));
+      setBrandModalOpen(false);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "";
+      toast(
+        message === "brand_exists" && brandEditIndex === null
+          ? "Бренд с таким названием уже существует"
+          : "Не удалось сохранить бренд",
+        "error",
+      );
+    }
+  };
+
+  const handleDeleteBrand = async (b: SellerBrand) => {
+    if (!user) return;
+    try {
+      await deleteSellerBrand(user.id, b.brand);
+      setBrands(await fetchSellerBrands(user.id));
+      toast("Бренд удалён", "info");
+    } catch {
+      toast("Не удалось удалить бренд", "error");
+    }
+  };
+
   if (!user) {
     return (
       <div className="container">
         <EmptyState
           title="Войдите в аккаунт"
-          description="Чтобы видеть конфигурации, заказы и отзывы, войдите в профиль."
+          description="Чтобы видеть профиль и разделы, войдите в аккаунт."
           actionLabel="Войти"
           onAction={() => navigate("/auth")}
         />
@@ -223,49 +292,21 @@ export default function Profile() {
         </div>
       </section>
 
-      {user.role === "seller" ? (
-        <Card className="mb-6 gap-2 p-4" aria-label="Прайс-лист продавца">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <h2 className="text-lg font-semibold">Прайс-лист</h2>
-            <span className="text-sm text-muted-foreground">в разработке</span>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            {brands.length > 0 ? (
-              brands.map((b) => (
-                <Badge key={b} variant="outline">
-                  {b}
-                </Badge>
-              ))
-            ) : (
-              <span className="text-sm text-muted-foreground">Брендов пока нет</span>
-            )}
-          </div>
-        </Card>
-      ) : null}
-
-      {user.role === "admin" ? (
-        <div className="mb-6">
-          <Link to="/admin" className="font-medium text-primary no-underline hover:underline">
-            Администрирование пользователей
-          </Link>
-        </div>
-      ) : null}
-
       <nav
         className="mb-6 flex gap-1 rounded-lg bg-muted p-1"
         aria-label="Разделы профиля"
       >
-        {TABS.map((t) => (
+        {tabs.map((t) => (
           <Link
             key={t.key}
             to={`/profile/${t.key}`}
             className={cn(
               "flex-1 rounded-md px-3 py-2 text-center text-sm font-medium no-underline transition-colors",
-              active === t.key
+              activeTab === t.key
                 ? "bg-background text-foreground shadow-sm"
                 : "text-muted-foreground hover:text-foreground",
             )}
-            aria-current={active === t.key ? "page" : undefined}
+            aria-current={activeTab === t.key ? "page" : undefined}
           >
             {t.label}
           </Link>
@@ -277,7 +318,7 @@ export default function Profile() {
           <Skeleton className="h-20 w-full" />
           <Skeleton className="h-20 w-full" />
         </div>
-      ) : active === "configs" ? (
+      ) : activeTab === "configs" ? (
         <section aria-label="Мои конфигурации">
           {configs.length === 0 ? (
             <EmptyState
@@ -326,7 +367,7 @@ export default function Profile() {
             </div>
           )}
         </section>
-      ) : active === "orders" ? (
+      ) : activeTab === "orders" ? (
         <section aria-label="История заказов">
           {orders.length === 0 ? (
             <EmptyState
@@ -379,7 +420,7 @@ export default function Profile() {
             </div>
           )}
         </section>
-      ) : active === "reviews" ? (
+      ) : activeTab === "reviews" ? (
         <section aria-label="Мои отзывы">
           {reviews.length === 0 ? (
             <EmptyState
@@ -402,42 +443,83 @@ export default function Profile() {
             </div>
           )}
         </section>
-      ) : (
-        <section aria-label="Настройки">
-          <Card className="p-4">
-            <div className="gap-3">
-              <div className="flex items-center justify-between gap-4 py-3">
-                <div>
-                  <h3 className="font-semibold">Тема оформления</h3>
-                  <p className="text-sm text-muted-foreground">Светлая или тёмная.</p>
-                </div>
-                <Select value={theme} onValueChange={(v) => setTheme(v as AppSettings["theme"])}>
-                  <SelectTrigger size="sm" aria-label="Тема оформления">
-                    <SelectValue placeholder="Тема" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="light">Светлая</SelectItem>
-                    <SelectItem value="dark">Тёмная</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="flex items-center justify-between gap-4 border-t py-3">
-                <div>
-                  <h3 className="font-semibold">Уведомления</h3>
-                  <p className="text-sm text-muted-foreground">
-                    Оформлять показ уведомлений (демо).
-                  </p>
-                </div>
-                <Switch
-                  checked={settings.notifications}
-                  onCheckedChange={(v) => updateSettings({ notifications: v })}
-                  aria-label="Уведомления"
-                />
-              </div>
-            </div>
-          </Card>
+      ) : activeTab === "admin-users" ? (
+        <section aria-label="Администрирование пользователей">
+          <Admin embedded />
         </section>
-      )}
+      ) : activeTab === "brands" ? (
+        <section aria-label="Бренды" className="flex flex-col gap-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-lg font-semibold">Бренды продавца</h2>
+            <Button onClick={openAddBrand}>Добавить бренд</Button>
+          </div>
+          {brands.length === 0 ? (
+            <EmptyState
+              title="Брендов пока нет"
+              description="Добавьте бренд, который вы представляете, и его описание."
+            />
+          ) : (
+            <div className="flex flex-col gap-3">
+              {brands.map((b, i) => (
+                <Card key={b.brand} className="gap-2 p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div className="flex min-w-0 flex-col">
+                      <span className="text-lg font-semibold">{b.brand}</span>
+                      {b.description ? (
+                        <span className="text-sm text-muted-foreground">{b.description}</span>
+                      ) : (
+                        <span className="text-sm text-muted-foreground">Без описания</span>
+                      )}
+                    </div>
+                    <div className="flex gap-2">
+                      <Button variant="secondary" size="sm" onClick={() => openEditBrand(i, b)}>
+                        Редактировать
+                      </Button>
+                      <Button variant="ghost" size="sm" onClick={() => handleDeleteBrand(b)}>
+                        Удалить
+                      </Button>
+                    </div>
+                  </div>
+                </Card>
+              ))}
+            </div>
+          )}
+
+          <Modal
+            open={brandModalOpen}
+            onClose={() => setBrandModalOpen(false)}
+            title={brandEditIndex !== null ? "Редактировать бренд" : "Новый бренд"}
+            footer={
+              <>
+                <Button variant="ghost" onClick={() => setBrandModalOpen(false)}>
+                  Отмена
+                </Button>
+                <Button onClick={handleSaveBrand}>
+                  {brandEditIndex !== null ? "Сохранить" : "Добавить"}
+                </Button>
+              </>
+            }
+          >
+            <div className="flex flex-col gap-4">
+              <Field label="Название бренда" htmlFor="brand-name" required>
+                <Input
+                  id="brand-name"
+                  value={brandName}
+                  onChange={(e) => setBrandName(e.target.value)}
+                />
+              </Field>
+              <Field label="Описание бренда" htmlFor="brand-description">
+                <Textarea
+                  id="brand-description"
+                  value={brandDescription}
+                  onChange={(e) => setBrandDescription(e.target.value)}
+                  placeholder="Небольшое описание бренда…"
+                />
+              </Field>
+            </div>
+          </Modal>
+        </section>
+      ) : null}
     </div>
   );
 }

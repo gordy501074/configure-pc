@@ -46,7 +46,7 @@ export default function CustomConfig() {
   const navigate = useNavigate();
   const location = useLocation();
   const { toast } = useToast();
-  const { user } = useAuth();
+  const { user, isCustomer } = useAuth();
 
   const [chosen, setChosen] = useState<Record<ComponentCategory, Part | null>>({
     ...EMPTY_CHOSEN,
@@ -183,9 +183,11 @@ export default function CustomConfig() {
           <Button variant="ghost" onClick={handleShare}>
             Поделиться
           </Button>
-          <Button variant="secondary" onClick={() => setReviewOpen(true)}>
-            Отзыв
-          </Button>
+          {isCustomer ? (
+            <Button variant="secondary" onClick={() => setReviewOpen(true)}>
+              Отзыв
+            </Button>
+          ) : null}
         </div>
       </div>
 
@@ -276,7 +278,7 @@ export default function CustomConfig() {
               onChange={(e) => setName(e.target.value)}
             />
 
-            {complete ? (
+            {complete && isCustomer ? (
               <InstallmentPlan
                 total={stats.totalPrice}
                 state={{
@@ -296,12 +298,16 @@ export default function CustomConfig() {
               />
             ) : null}
 
-            <Button size="lg" disabled={!complete} onClick={checkout}>
-              Оформить заказ
-            </Button>
-            <Button variant="secondary" disabled={!complete} onClick={handleSave}>
-              Сохранить в профиль
-            </Button>
+            {isCustomer ? (
+              <>
+                <Button size="lg" disabled={!complete} onClick={checkout}>
+                  Оформить заказ
+                </Button>
+                <Button variant="secondary" disabled={!complete} onClick={handleSave}>
+                  Сохранить в профиль
+                </Button>
+              </>
+            ) : null}
           </Card>
         </aside>
       </div>
@@ -316,12 +322,14 @@ export default function CustomConfig() {
         />
       ) : null}
 
+      {isCustomer ? (
       <ReviewDialog
         open={reviewOpen}
         onClose={() => setReviewOpen(false)}
         entityId="custom-config"
         author={user?.name ?? "Гость"}
       />
+    ) : null}
     </div>
   );
 }

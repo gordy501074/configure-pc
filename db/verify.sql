@@ -23,7 +23,8 @@ SELECT
   (SELECT count(*) FROM user_account WHERE role='customer') AS customer_count,
   (SELECT count(*) FROM user_account WHERE role IN ('admin','seller') AND phone IS NOT NULL) AS roles_with_phone,
   (SELECT count(*) FROM seller_brand sb JOIN user_account u ON u.user_id=sb.seller_id
-     WHERE u.role='seller' AND sb.brand='Confi') AS confi_seller_brand;
+     WHERE u.role='seller' AND sb.brand='Confi') AS confi_seller_brand,
+  (SELECT count(*) FROM seller_brand sb WHERE sb.brand='Confi' AND sb.description IS NOT NULL) AS seller_brand_has_description;
 
 -- FK integrity: orphaned junction rows should be 0.
 SELECT 'orphan_ready_pc_part' AS check_name,

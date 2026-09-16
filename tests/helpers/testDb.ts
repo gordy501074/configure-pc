@@ -6,7 +6,7 @@ import { mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { components, readyPcs } from "../../src/data/mock.ts";
-import { migrateUserAccount } from "../../db/migrate.ts";
+import { migrateSellerBrandDescription, migrateUserAccount } from "../../db/migrate.ts";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -67,9 +67,9 @@ function seed(db: Database.Database): void {
     ON CONFLICT(user_id) DO NOTHING
   `);
   const insertSellerBrand = db.prepare(`
-    INSERT INTO seller_brand (seller_id, brand)
-    VALUES (@seller_id, @brand)
-    ON CONFLICT(seller_id, brand) DO NOTHING
+    INSERT INTO seller_brand (seller_id, brand, description)
+    VALUES (@seller_id, @brand, @description)
+    ON CONFLICT(seller_id, brand) DO UPDATE SET description=excluded.description
   `);
 
   const seedAll = db.transaction(() => {
@@ -119,7 +119,11 @@ function seed(db: Database.Database): void {
       user_id: "usr-seller", name: "Продавец Confi", email: "user@company.com",
       phone: null, role: "seller", company: "Confi Маркет",
     });
-    insertSellerBrand.run({ seller_id: "usr-seller", brand: "Confi" });
+    insertSellerBrand.run({
+      seller_id: "usr-seller",
+      brand: "Confi",
+      description: "Собственные сборки Confi",
+    });
 
     return n;
   });
@@ -135,6 +139,7 @@ export function initTestDb(dbPath = TEST_DB_PATH): string {
   // adds any new tables (e.g. seller_brand) to pre-existing test DBs.
   db.exec(readFileSync(join(root, "db", "schema.sql"), "utf8"));
   migrateUserAccount(db);
+  migrateSellerBrandDescription(db);
   seed(db);
   db.close();
   return dbPath;

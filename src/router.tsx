@@ -1,7 +1,7 @@
 import { lazy, Suspense, type ReactNode } from "react";
 import { createBrowserRouter, RouterProvider } from "react-router-dom";
 import { Skeleton } from "./components/ui";
-import { RequireAuth, RequireRole } from "./screens/guards";
+import { RequireAuth, RequireCustomer, RequireRole } from "./screens/guards";
 
 const Layout = lazy(() => import("./screens/Layout"));
 const Onboarding = lazy(() => import("./screens/Onboarding"));
@@ -74,17 +74,17 @@ const router = createBrowserRouter([
       {
         path: "checkout",
         element: (
-          <RequireAuth>
+          <RequireCustomer>
             <Checkout />
-          </RequireAuth>
+          </RequireCustomer>
         ),
       },
       {
         path: "alpha",
         element: (
-          <RequireAuth>
+          <RequireCustomer>
             <InstallmentCheckout />
-          </RequireAuth>
+          </RequireCustomer>
         ),
       },
       {

@@ -11,15 +11,16 @@ async function loginAs(page: import("@playwright/test").Page, request: import("@
   await page.context().addCookies([
     { name: "confi_session", value: sessionId, url: APP_BASE.replace(/\/$/, "") },
   ]);
-  return user as { id: string };
+  return { ...(user as { id: string }), sessionId } as { id: string; sessionId: string };
 }
 
 test.describe("regression: profile", () => {
   test("profile configs tab lists saved builds", async ({ page, request }) => {
     const email = "cfg-owner@example.com";
-    const { id } = await loginAs(page, request, email, "Владелец");
-    // Seed a config for this user via API (pass their real user id).
+    const { id, sessionId } = await loginAs(page, request, email, "Владелец");
+    // Seed a config for this user via API (requireCustomer needs the session cookie).
     const put = await request.put(`/api/configs/cfg-demo-1?userId=${encodeURIComponent(id)}`, {
+      headers: { cookie: `confi_session=${sessionId}` },
       data: {
         name: "Моя офисная сборка",
         source: "custom",
@@ -39,9 +40,10 @@ test.describe("regression: profile", () => {
 
   test("profile orders tab lists orders and cancels one", async ({ page, request }) => {
     const email = "ord-owner@example.com";
-    const { id } = await loginAs(page, request, email, "Заказчик");
-    // Seed an order via API bound to the same user.
+    const { id, sessionId } = await loginAs(page, request, email, "Заказчик");
+    // Seed an order via API bound to the same user (requireCustomer needs cookie).
     const put = await request.put(`/api/orders/ord-demo-1?userId=${encodeURIComponent(id)}`, {
+      headers: { cookie: `confi_session=${sessionId}` },
       data: {
         status: "new",
         address: "Москва, ул. Ленина, 1",
@@ -59,11 +61,16 @@ test.describe("regression: profile", () => {
     await expect(page.getByText("Confi Office 3000")).toHaveCount(0);
   });
 
-  test("profile settings tab renders theme + notifications", async ({ page, request }) => {
+  test("profile header settings opens theme + notifications", async ({ page, request }) => {
     const email = "settings-owner@example.com";
     await loginAs(page, request, email, "Настройщик");
-    await page.goto("/profile/settings");
+    await page.goto("/profile");
     await expect(page.getByRole("heading", { name: "Настройщик" })).toBeVisible();
+    // The settings tab no longer exists; settings live in the header gear popup.
+    await expect(page.getByRole("link", { name: "Настройки" })).toHaveCount(0);
+    const gear = page.getByRole("button", { name: "Настройки" });
+    await expect(gear).toBeVisible();
+    await gear.click();
     await expect(page.getByLabel("Тема оформления")).toBeVisible();
     await expect(page.getByLabel("Уведомления")).toBeVisible();
   });

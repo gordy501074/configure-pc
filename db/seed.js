@@ -8,7 +8,7 @@ import { readFileSync, appendFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { components, readyPcs, seededReviews } from "../src/data/mock.ts";
-import { migrateUserAccount } from "./migrate.ts";
+import { migrateSellerBrandDescription, migrateUserAccount } from "./migrate.ts";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const DB_PATH = join(root, "db", "confi.db");
@@ -70,6 +70,7 @@ db.pragma("foreign_keys = ON");
 db.pragma("journal_mode = WAL");
 db.exec(readFileSync(SCHEMA, "utf8"));
 migrateUserAccount(db);
+migrateSellerBrandDescription(db);
 
 /** Validate a single part row; returns null to skip. */
 function validatePart(p) {
@@ -130,9 +131,9 @@ const upsertAccount = db.prepare(`
 `);
 
 const insertSellerBrand = db.prepare(`
-  INSERT INTO seller_brand (seller_id, brand)
-  VALUES (@seller_id, @brand)
-  ON CONFLICT(seller_id, brand) DO NOTHING
+  INSERT INTO seller_brand (seller_id, brand, description)
+  VALUES (@seller_id, @brand, @description)
+  ON CONFLICT(seller_id, brand) DO UPDATE SET description=excluded.description
 `);
 
 const seedAll = db.transaction(() => {
@@ -205,7 +206,11 @@ const seedAll = db.transaction(() => {
     role: "seller",
     company: "Confi Маркет",
   });
-  insertSellerBrand.run({ seller_id: "usr-seller", brand: "Confi" });
+  insertSellerBrand.run({
+    seller_id: "usr-seller",
+    brand: "Confi",
+    description: "Собственные сборки Confi",
+  });
 
   return partCount;
 });

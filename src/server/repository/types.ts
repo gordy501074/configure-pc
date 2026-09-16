@@ -14,7 +14,7 @@ export type Usage = "gaming" | "work" | "video" | "universal";
 export type ConfigSource = "custom" | "auto" | "ready";
 export type OrderStatus = "new" | "confirmed" | "delivery" | "done" | "alpha";
 export type UserRole = "customer" | "seller" | "admin";
-export type SellerBrandDto = { brand: string };
+export type SellerBrandDto = { brand: string; description?: string };
 
 export interface SpecItem {
   label: string;
