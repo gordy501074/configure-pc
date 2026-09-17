@@ -42,41 +42,46 @@ export function checkPartCompatibility(
   const gpu = chosen.gpu ?? (candidate.category === "gpu" ? candidate : null);
 
   // --- CPU <-> Motherboard socket ---
-  if (cpu && motherboard && cpu.socket !== motherboard.socket) {
+  if (cpu && motherboard && cpu.compat.socket !== motherboard.compat.socket) {
     issues.push(
-      `Сокет процессора ${cpu.socket} не подходит к плате ${motherboard.socket}.`,
+      `Сокет процессора ${cpu.compat.socket} не подходит к плате ${motherboard.compat.socket}.`,
     );
   }
 
   // --- CPU <-> cooler TDP ---
-  if (cpu && cooler && (cooler.coolTdp ?? 0) > 0 && cpu.tdp > (cooler.coolTdp ?? 0)) {
+  if (
+    cpu &&
+    cooler &&
+    (cooler.compat.coolTdp ?? 0) > 0 &&
+    cpu.tdp > (cooler.compat.coolTdp ?? 0)
+  ) {
     issues.push(
-      `Кулер рассчитан на TDP ${cooler.coolTdp} Вт, а процессор потребляет до ${cpu.tdp} Вт.`,
+      `Кулер рассчитан на TDP ${cooler.compat.coolTdp} Вт, а процессор потребляет до ${cpu.tdp} Вт.`,
     );
   }
 
   // --- Motherboard <-> RAM type ---
-  if (motherboard && ram && motherboard.ramType !== ram.ramType) {
+  if (motherboard && ram && motherboard.compat.ramType !== ram.compat.ramType) {
     issues.push(
-      `Плата поддерживает ${motherboard.ramType}, а память — ${ram.ramType}.`,
+      `Плата поддерживает ${motherboard.compat.ramType}, а память — ${ram.compat.ramType}.`,
     );
   }
 
   // --- Case <-> motherboard form factor (case supports up to its own) ---
-  if (pcCase && motherboard && pcCase.formFactor) {
+  if (pcCase && motherboard && pcCase.compat.formFactor) {
     const rank: Record<string, number> = { ITX: 1, mATX: 2, ATX: 3 };
-    if (rank[motherboard.formFactor ?? "ATX"] > rank[pcCase.formFactor]) {
+    if (rank[motherboard.compat.formFactor ?? "ATX"] > rank[pcCase.compat.formFactor]) {
       issues.push(
-        `Форм-фактор платы ${motherboard.formFactor} не влезает в корпус ${pcCase.formFactor}.`,
+        `Форм-фактор платы ${motherboard.compat.formFactor} не влезает в корпус ${pcCase.compat.formFactor}.`,
       );
     }
   }
 
   // --- Case <-> GPU length ---
-  if (pcCase && gpu && gpu.gpuLength && pcCase.gpuLength) {
-    if (gpu.gpuLength > pcCase.gpuLength) {
+  if (pcCase && gpu && gpu.compat.gpuLength && pcCase.compat.gpuLength) {
+    if (gpu.compat.gpuLength > pcCase.compat.gpuLength) {
       issues.push(
-        `Видеокарта длиной ${gpu.gpuLength} мм не влезает в корпус (до ${pcCase.gpuLength} мм).`,
+        `Видеокарта длиной ${gpu.compat.gpuLength} мм не влезает в корпус (до ${pcCase.compat.gpuLength} мм).`,
       );
     }
   }
@@ -85,13 +90,13 @@ export function checkPartCompatibility(
   if (
     pcCase &&
     cooler &&
-    cooler.sizeMm &&
-    pcCase.cpuCoolerMaxHeight &&
-    cooler.sizeMm > 100
+    cooler.compat.sizeMm &&
+    pcCase.compat.cpuCoolerMaxHeight &&
+    cooler.compat.sizeMm > 100
   ) {
-    if (cooler.sizeMm > pcCase.cpuCoolerMaxHeight) {
+    if (cooler.compat.sizeMm > pcCase.compat.cpuCoolerMaxHeight) {
       issues.push(
-        `Высота кулера ${cooler.sizeMm} мм не влезает в корпус (до ${pcCase.cpuCoolerMaxHeight} мм).`,
+        `Высота кулера ${cooler.compat.sizeMm} мм не влезает в корпус (до ${pcCase.compat.cpuCoolerMaxHeight} мм).`,
       );
     }
   }
@@ -101,17 +106,17 @@ export function checkPartCompatibility(
     .filter((p): p is Part => !!p)
     .filter((p) => p.id !== psu?.id)
     .reduce((sum, p) => sum + p.tdp, 0);
-  if (psu && psu.power) {
-    if (psu.power < othersTdp * 1.6) {
+  if (psu && psu.compat.power) {
+    if (psu.compat.power < othersTdp * 1.6) {
       issues.push(
-        `Мощности БП ${psu.power} Вт недостаточно для остальных компонентов (потребление ~${Math.round(othersTdp * 1.6)} Вт с запасом).`,
+        `Мощности БП ${psu.compat.power} Вт недостаточно для остальных компонентов (потребление ~${Math.round(othersTdp * 1.6)} Вт с запасом).`,
       );
     }
   }
 
   // --- PSU form factor vs case ---
-  if (psu && pcCase && pcCase.formFactor === "ITX") {
-    if (psu.psuForm !== "SFX") {
+  if (psu && pcCase && pcCase.compat.formFactor === "ITX") {
+    if (psu.compat.psuForm !== "SFX") {
       issues.push("Для корпуса ITX нужен блок питания SFX.");
     }
   }

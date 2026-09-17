@@ -21,6 +21,35 @@ export interface SpecItem {
   value: string;
 }
 
+export type FormFactor = "ATX" | "mATX" | "ITX";
+export type RamType = "DDR4" | "DDR5";
+export type PsuForm = "ATX" | "SFX";
+
+/**
+ * Nested compatibility markers used by the compatibility engine.
+ * Persisted inside `compat_json` (part table) as `{ v: 2, ...compat }`.
+ */
+export interface PartCompat {
+  socket?: string;
+  chipset?: string;
+  ramType?: RamType;
+  psuForm?: PsuForm;
+  /** Rated wattage (only for PSU parts). */
+  power?: number;
+  /** Motherboard / case form factor. */
+  formFactor?: FormFactor;
+  /** Max GPU length in mm (only for GPU parts). */
+  gpuLength?: number;
+  /** Max CPU cooler height in mm (only for case parts). */
+  cpuCoolerMaxHeight?: number;
+  /** Cooling capacity in watts (only for cooler parts). */
+  coolTdp?: number;
+  /** Heatsink / radiator height/length in mm (only for cooler parts). */
+  sizeMm?: number;
+  /** Benchmark scores (CPU / GPU). */
+  benches?: { label: string; score: number }[];
+}
+
 export interface Part {
   id: string;
   category: ComponentCategory;
@@ -32,21 +61,7 @@ export interface Part {
   tdp: number;
   image?: string;
   /** Compat markers used by the compatibility engine. */
-  socket?: string;
-  chipset?: string;
-  ramType?: "DDR4" | "DDR5";
-  psuForm?: "ATX" | "SFX";
-  power?: number;
-  formFactor?: "ATX" | "mATX" | "ITX";
-  gpuLength?: number;
-  cpuCoolerMaxHeight?: number;
-  includesCooler?: boolean;
-  baseWattage?: number;
-  /** Cooling capacity in watts (only for cooler parts). */
-  coolTdp?: number;
-  /** Heatsink / radiator height/length in mm (only for cooler parts). */
-  sizeMm?: number;
-  benches?: { label: string; score: number }[];
+  compat: PartCompat;
 }
 
 export interface ConfigPart {

@@ -112,7 +112,7 @@ API через Vite-прокси `/api → http://localhost:8787`.
 
 | Команда | Действие |
 | --- | --- |
-| `npm run db:init` | Создать `db/confi.db` со схемой + миграцией (идемпотентно, `user_version=4`) |
+| `npm run db:init` | Создать `db/confi.db` со схемой + миграцией (идемпотентно, `user_version=5`) |
 | `npm run db:seed` | Seed каталога/готовых ПК/отзывов/ролей из `src/data/mock.ts` (пересоздаёт каталог) |
 | `npm run db:import <export.json>` | Импорт данных из устаревшего localStorage-экспорта `alfagen:` (батчинг, quarantine) |
 | `npm run db:backup` | Резервная копия `db/confi.db` в `db/backups/` |
@@ -125,7 +125,7 @@ API через Vite-прокси `/api → http://localhost:8787`.
 `src/data/mock.ts` напрямую (Node 24 native type-stripping), валидирует каждую
 запись и пишет битые строки в `db/quarantine-*.log`.
 
-**Миграция схемы:** `db/schema.sql` — источник DDL (`user_version=4`). В `db/migrate.ts`
+**Миграция схемы:** `db/schema.sql` — источник DDL (`user_version=5`). В `db/migrate.ts`
 — идемпотентные миграции:
 - `migrateUserAccount` — пересоздание `user_account` с новым CHECK роли
   (`'guest'` убрана, добавлены `seller`/`admin`) и колонкой `company`
@@ -139,6 +139,7 @@ API через Vite-прокси `/api → http://localhost:8787`.
 ### API
 
 - `GET /api/parts[?category=]`, `GET /api/parts/:id` — каталог компонентов
+  (маркеры совместимости отдаются вложенным документом `part.compat`)
 - `GET /api/ready`, `GET /api/ready/:id` — готовые ПК
 - `GET/POST /api/onboarding` — онбординг
 - `POST /api/auth/request-code`, `POST /api/auth/verify` — мок-SMS
@@ -379,7 +380,7 @@ npm run preview
 | `npm run typecheck` | Проверка типов клиента и сервера |
 | `npm run server` | Запуск SQLite API-сервера (`http://localhost:8787`) |
 | `npm run server:dev` | Запуск SQLite API-сервера в watch-режиме |
-| `npm run db:init` | Создание схемы БД + миграция (`user_version=4`) |
+| `npm run db:init` | Создание схемы БД + миграция (`user_version=5`) |
 | `npm run db:seed` | Seed каталога/ролей из `mock.ts` |
 | `npm run db:import` | Импорт из localStorage-экспорта |
 | `npm run db:backup` | Бэкап `confi.db` |

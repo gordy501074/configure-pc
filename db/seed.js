@@ -28,28 +28,9 @@ const CATEGORIES = [
   "cooler",
 ];
 
-/** Normalize a psu part's form factor (mock mixes psuForm/formFactor). */
-function psuFormOf(p) {
-  return p.psuForm ?? p.formFactor;
-}
-
-/** Extract sparse compat markers into a JSON object. Mirrors Part fields. */
+/** Serialize the nested PartCompat document into compat_json (versioned). */
 function compatJson(p) {
-  const compat = {
-    socket: p.socket,
-    chipset: p.chipset,
-    ramType: p.ramType,
-    psuForm: psuFormOf(p),
-    power: p.power,
-    formFactor: p.formFactor,
-    gpuLength: p.gpuLength,
-    cpuCoolerMaxHeight: p.cpuCoolerMaxHeight,
-    includesCooler: p.includesCooler,
-    coolTdp: p.coolTdp,
-    sizeMm: p.sizeMm,
-    benches: p.benches ?? [],
-  };
-  return JSON.stringify(compat);
+  return JSON.stringify({ v: 2, ...p.compat });
 }
 
 function specsJson(p) {

@@ -10,12 +10,14 @@ export const components: Record<ComponentCategory, Part[]> = {
       name: "Intel Core i5-13400F",
       brand: "Intel",
       price: 21500,
-      socket: "LGA1700",
       tdp: 154,
-      benches: [
-        { label: "Single", score: 2512 },
-        { label: "Multi", score: 17440 },
-      ],
+      compat: {
+        socket: "LGA1700",
+        benches: [
+          { label: "Single", score: 2512 },
+          { label: "Multi", score: 17440 },
+        ],
+      },
       specs: [
         { label: "Ядра / потоки", value: "10 / 16" },
         { label: "Частота", value: "2.5–4.6 ГГц" },
@@ -28,12 +30,14 @@ export const components: Record<ComponentCategory, Part[]> = {
       name: "Intel Core i5-14600K",
       brand: "Intel",
       price: 35900,
-      socket: "LGA1700",
       tdp: 181,
-      benches: [
-        { label: "Single", score: 2810 },
-        { label: "Multi", score: 24400 },
-      ],
+      compat: {
+        socket: "LGA1700",
+        benches: [
+          { label: "Single", score: 2810 },
+          { label: "Multi", score: 24400 },
+        ],
+      },
       specs: [
         { label: "Ядра / потоки", value: "14 / 20" },
         { label: "Частота", value: "3.5–5.3 ГГц" },
@@ -46,12 +50,14 @@ export const components: Record<ComponentCategory, Part[]> = {
       name: "Intel Core i7-13700K",
       brand: "Intel",
       price: 48900,
-      socket: "LGA1700",
       tdp: 253,
-      benches: [
-        { label: "Single", score: 2916 },
-        { label: "Multi", score: 36000 },
-      ],
+      compat: {
+        socket: "LGA1700",
+        benches: [
+          { label: "Single", score: 2916 },
+          { label: "Multi", score: 36000 },
+        ],
+      },
       specs: [
         { label: "Ядра / потоки", value: "16 / 24" },
         { label: "Частота", value: "3.4–5.4 ГГц" },
@@ -64,12 +70,14 @@ export const components: Record<ComponentCategory, Part[]> = {
       name: "AMD Ryzen 5 7600",
       brand: "AMD",
       price: 22900,
-      socket: "AM5",
       tdp: 88,
-      benches: [
-        { label: "Single", score: 2751 },
-        { label: "Multi", score: 16150 },
-      ],
+      compat: {
+        socket: "AM5",
+        benches: [
+          { label: "Single", score: 2751 },
+          { label: "Multi", score: 16150 },
+        ],
+      },
       specs: [
         { label: "Ядра / потоки", value: "6 / 12" },
         { label: "Частота", value: "3.8–5.1 ГГц" },
@@ -82,12 +90,14 @@ export const components: Record<ComponentCategory, Part[]> = {
       name: "AMD Ryzen 7 7800X3D",
       brand: "AMD",
       price: 45900,
-      socket: "AM5",
       tdp: 120,
-      benches: [
-        { label: "Single", score: 2700 },
-        { label: "Multi", score: 24000 },
-      ],
+      compat: {
+        socket: "AM5",
+        benches: [
+          { label: "Single", score: 2700 },
+          { label: "Multi", score: 24000 },
+        ],
+      },
       specs: [
         { label: "Ядра / потоки", value: "8 / 16" },
         { label: "Частота", value: "4.2–5.0 ГГц" },
@@ -100,12 +110,14 @@ export const components: Record<ComponentCategory, Part[]> = {
       name: "AMD Ryzen 9 7950X",
       brand: "AMD",
       price: 62900,
-      socket: "AM5",
       tdp: 170,
-      benches: [
-        { label: "Single", score: 2890 },
-        { label: "Multi", score: 46200 },
-      ],
+      compat: {
+        socket: "AM5",
+        benches: [
+          { label: "Single", score: 2890 },
+          { label: "Multi", score: 46200 },
+        ],
+      },
       specs: [
         { label: "Ядра / потоки", value: "16 / 32" },
         { label: "Частота", value: "4.5–5.7 ГГц" },
@@ -118,12 +130,14 @@ export const components: Record<ComponentCategory, Part[]> = {
       name: "AMD Ryzen 5 5600",
       brand: "AMD",
       price: 12900,
-      socket: "AM4",
       tdp: 65,
-      benches: [
-        { label: "Single", score: 1820 },
-        { label: "Multi", score: 12100 },
-      ],
+      compat: {
+        socket: "AM4",
+        benches: [
+          { label: "Single", score: 1820 },
+          { label: "Multi", score: 12100 },
+        ],
+      },
       specs: [
         { label: "Ядра / потоки", value: "6 / 12" },
         { label: "Частота", value: "3.5–4.4 ГГц" },
@@ -140,11 +154,13 @@ export const components: Record<ComponentCategory, Part[]> = {
       brand: "NVIDIA",
       price: 36500,
       tdp: 115,
-      gpuLength: 243,
-      benches: [
-        { label: "G3D", score: 20000 },
-        { label: "GTX", score: 16000 },
-      ],
+      compat: {
+        gpuLength: 243,
+        benches: [
+          { label: "G3D", score: 20000 },
+          { label: "GTX", score: 16000 },
+        ],
+      },
       specs: [
         { label: "Память", value: "8 ГБ GDDR6" },
         { label: "Шина", value: "128 бит" },
@@ -158,11 +174,13 @@ export const components: Record<ComponentCategory, Part[]> = {
       brand: "NVIDIA",
       price: 68500,
       tdp: 220,
-      gpuLength: 310,
-      benches: [
-        { label: "G3D", score: 32000 },
-        { label: "GTX", score: 24000 },
-      ],
+      compat: {
+        gpuLength: 310,
+        benches: [
+          { label: "G3D", score: 32000 },
+          { label: "GTX", score: 24000 },
+        ],
+      },
       specs: [
         { label: "Память", value: "12 ГБ GDDR6X" },
         { label: "Шина", value: "192 бит" },
@@ -176,11 +194,13 @@ export const components: Record<ComponentCategory, Part[]> = {
       brand: "NVIDIA",
       price: 129900,
       tdp: 320,
-      gpuLength: 342,
-      benches: [
-        { label: "G3D", score: 44000 },
-        { label: "GTX", score: 33000 },
-      ],
+      compat: {
+        gpuLength: 342,
+        benches: [
+          { label: "G3D", score: 44000 },
+          { label: "GTX", score: 33000 },
+        ],
+      },
       specs: [
         { label: "Память", value: "16 ГБ GDDR6X" },
         { label: "Шина", value: "256 бит" },
@@ -194,8 +214,10 @@ export const components: Record<ComponentCategory, Part[]> = {
       brand: "AMD",
       price: 27900,
       tdp: 165,
-      gpuLength: 232,
-      benches: [{ label: "G3D", score: 18000 }],
+      compat: {
+        gpuLength: 232,
+        benches: [{ label: "G3D", score: 18000 }],
+      },
       specs: [
         { label: "Память", value: "8 ГБ GDDR6" },
         { label: "Шина", value: "128 бит" },
@@ -209,11 +231,13 @@ export const components: Record<ComponentCategory, Part[]> = {
       brand: "AMD",
       price: 61500,
       tdp: 263,
-      gpuLength: 280,
-      benches: [
-        { label: "G3D", score: 29000 },
-        { label: "GTX", score: 22000 },
-      ],
+      compat: {
+        gpuLength: 280,
+        benches: [
+          { label: "G3D", score: 29000 },
+          { label: "GTX", score: 22000 },
+        ],
+      },
       specs: [
         { label: "Память", value: "16 ГБ GDDR6" },
         { label: "Шина", value: "256 бит" },
@@ -229,11 +253,13 @@ export const components: Record<ComponentCategory, Part[]> = {
       name: "ASUS Prime B760M-A",
       brand: "ASUS",
       price: 12900,
-      socket: "LGA1700",
-      chipset: "B760",
-      ramType: "DDR5",
-      formFactor: "mATX",
       tdp: 10,
+      compat: {
+        socket: "LGA1700",
+        chipset: "B760",
+        ramType: "DDR5",
+        formFactor: "mATX",
+      },
       specs: [
         { label: "Сокет", value: "LGA1700" },
         { label: "Чипсет", value: "Intel B760" },
@@ -246,11 +272,13 @@ export const components: Record<ComponentCategory, Part[]> = {
       name: "MSI MAG Z790 Tomahawk",
       brand: "MSI",
       price: 29900,
-      socket: "LGA1700",
-      chipset: "Z790",
-      ramType: "DDR5",
-      formFactor: "ATX",
       tdp: 12,
+      compat: {
+        socket: "LGA1700",
+        chipset: "Z790",
+        ramType: "DDR5",
+        formFactor: "ATX",
+      },
       specs: [
         { label: "Сокет", value: "LGA1700" },
         { label: "Чипсет", value: "Intel Z790" },
@@ -263,11 +291,13 @@ export const components: Record<ComponentCategory, Part[]> = {
       name: "Gigabyte B650M Aorus Elite",
       brand: "Gigabyte",
       price: 16500,
-      socket: "AM5",
-      chipset: "B650",
-      ramType: "DDR5",
-      formFactor: "mATX",
       tdp: 10,
+      compat: {
+        socket: "AM5",
+        chipset: "B650",
+        ramType: "DDR5",
+        formFactor: "mATX",
+      },
       specs: [
         { label: "Сокет", value: "AM5" },
         { label: "Чипсет", value: "AMD B650" },
@@ -280,11 +310,13 @@ export const components: Record<ComponentCategory, Part[]> = {
       name: "ASRock X670E Taichi",
       brand: "ASRock",
       price: 42900,
-      socket: "AM5",
-      chipset: "X670E",
-      ramType: "DDR5",
-      formFactor: "ATX",
       tdp: 14,
+      compat: {
+        socket: "AM5",
+        chipset: "X670E",
+        ramType: "DDR5",
+        formFactor: "ATX",
+      },
       specs: [
         { label: "Сокет", value: "AM5" },
         { label: "Чипсет", value: "AMD X670E" },
@@ -297,11 +329,13 @@ export const components: Record<ComponentCategory, Part[]> = {
       name: "MSI B550M PRO-VDH",
       brand: "MSI",
       price: 8600,
-      socket: "AM4",
-      chipset: "B550",
-      ramType: "DDR4",
-      formFactor: "mATX",
       tdp: 10,
+      compat: {
+        socket: "AM4",
+        chipset: "B550",
+        ramType: "DDR4",
+        formFactor: "mATX",
+      },
       specs: [
         { label: "Сокет", value: "AM4" },
         { label: "Чипсет", value: "AMD B550" },
@@ -317,8 +351,8 @@ export const components: Record<ComponentCategory, Part[]> = {
       name: "Kingston Fury Beast 32 ГБ 2x16 DDR5-6000",
       brand: "Kingston",
       price: 13900,
-      ramType: "DDR5",
       tdp: 8,
+      compat: { ramType: "DDR5" },
       specs: [
         { label: "Объём", value: "32 ГБ (2x16)" },
         { label: "Тип", value: "DDR5-6000" },
@@ -331,8 +365,8 @@ export const components: Record<ComponentCategory, Part[]> = {
       name: "Corsair Vengeance 64 ГБ 2x32 DDR5-5600",
       brand: "Corsair",
       price: 24900,
-      ramType: "DDR5",
       tdp: 10,
+      compat: { ramType: "DDR5" },
       specs: [
         { label: "Объём", value: "64 ГБ (2x32)" },
         { label: "Тип", value: "DDR5-5600" },
@@ -345,8 +379,8 @@ export const components: Record<ComponentCategory, Part[]> = {
       name: "Crucial Ballistix 16 ГБ 2x8 DDR4-3200",
       brand: "Crucial",
       price: 5400,
-      ramType: "DDR4",
       tdp: 6,
+      compat: { ramType: "DDR4" },
       specs: [
         { label: "Объём", value: "16 ГБ (2x8)" },
         { label: "Тип", value: "DDR4-3200" },
@@ -359,8 +393,8 @@ export const components: Record<ComponentCategory, Part[]> = {
       name: "G.Skill Ripjaws 32 ГБ 2x16 DDR4-3600",
       brand: "G.Skill",
       price: 9900,
-      ramType: "DDR4",
       tdp: 7,
+      compat: { ramType: "DDR4" },
       specs: [
         { label: "Объём", value: "32 ГБ (2x16)" },
         { label: "Тип", value: "DDR4-3600" },
@@ -373,8 +407,8 @@ export const components: Record<ComponentCategory, Part[]> = {
       name: "TeamGroup 16 ГБ 1x16 DDR5-5200",
       brand: "TeamGroup",
       price: 6900,
-      ramType: "DDR5",
       tdp: 6,
+      compat: { ramType: "DDR5" },
       specs: [
         { label: "Объём", value: "16 ГБ (1x16)" },
         { label: "Тип", value: "DDR5-5200" },
@@ -391,6 +425,7 @@ export const components: Record<ComponentCategory, Part[]> = {
       brand: "Samsung",
       price: 10900,
       tdp: 7,
+      compat: {},
       specs: [
         { label: "Тип", value: "NVMe M.2" },
         { label: "Объём", value: "1 ТБ" },
@@ -404,6 +439,7 @@ export const components: Record<ComponentCategory, Part[]> = {
       brand: "Samsung",
       price: 19900,
       tdp: 8,
+      compat: {},
       specs: [
         { label: "Тип", value: "NVMe M.2" },
         { label: "Объём", value: "2 ТБ" },
@@ -417,6 +453,7 @@ export const components: Record<ComponentCategory, Part[]> = {
       brand: "Kingston",
       price: 4200,
       tdp: 5,
+      compat: {},
       specs: [
         { label: "Тип", value: "NVMe M.2" },
         { label: "Объём", value: "500 ГБ" },
@@ -430,6 +467,7 @@ export const components: Record<ComponentCategory, Part[]> = {
       brand: "Seagate",
       price: 10900,
       tdp: 9,
+      compat: {},
       specs: [
         { label: "Тип", value: "SATA 3.5\"" },
         { label: "Объём", value: "4 ТБ" },
@@ -445,10 +483,12 @@ export const components: Record<ComponentCategory, Part[]> = {
       name: "NZXT H7 Flow ATX",
       brand: "NZXT",
       price: 11900,
-      formFactor: "ATX",
-      gpuLength: 435,
-      cpuCoolerMaxHeight: 185,
       tdp: 0,
+      compat: {
+        formFactor: "ATX",
+        gpuLength: 435,
+        cpuCoolerMaxHeight: 185,
+      },
       specs: [
         { label: "Форм-фактор", value: "ATX" },
         { label: "Длина GPU", value: "до 435 мм" },
@@ -461,10 +501,12 @@ export const components: Record<ComponentCategory, Part[]> = {
       name: "Fractal Design Pop Mini mATX",
       brand: "Fractal Design",
       price: 9400,
-      formFactor: "mATX",
-      gpuLength: 360,
-      cpuCoolerMaxHeight: 170,
       tdp: 0,
+      compat: {
+        formFactor: "mATX",
+        gpuLength: 360,
+        cpuCoolerMaxHeight: 170,
+      },
       specs: [
         { label: "Форм-фактор", value: "mATX" },
         { label: "Длина GPU", value: "до 360 мм" },
@@ -477,10 +519,12 @@ export const components: Record<ComponentCategory, Part[]> = {
       name: "Cooler Master NR200P SFF / ITX",
       brand: "Cooler Master",
       price: 10900,
-      formFactor: "ITX",
-      gpuLength: 330,
-      cpuCoolerMaxHeight: 155,
       tdp: 0,
+      compat: {
+        formFactor: "ITX",
+        gpuLength: 330,
+        cpuCoolerMaxHeight: 155,
+      },
       specs: [
         { label: "Форм-фактор", value: "ITX" },
         { label: "Длина GPU", value: "до 330 мм" },
@@ -496,9 +540,8 @@ export const components: Record<ComponentCategory, Part[]> = {
       name: "Corsair RM650x 650 Вт",
       brand: "Corsair",
       price: 10900,
-      psuForm: "ATX",
-      power: 650,
       tdp: 0,
+      compat: { psuForm: "ATX", power: 650 },
       specs: [
         { label: "Мощность", value: "650 Вт" },
         { label: "Форм-фактор", value: "ATX" },
@@ -511,9 +554,8 @@ export const components: Record<ComponentCategory, Part[]> = {
       name: "Seasonic Focus GX-750 750 Вт",
       brand: "Seasonic",
       price: 13900,
-      formFactor: "ATX",
-      power: 750,
       tdp: 0,
+      compat: { psuForm: "ATX", power: 750 },
       specs: [
         { label: "Мощность", value: "750 Вт" },
         { label: "Форм-фактор", value: "ATX" },
@@ -526,9 +568,8 @@ export const components: Record<ComponentCategory, Part[]> = {
       name: "be quiet! Straight Power 850 Вт",
       brand: "be quiet!",
       price: 15900,
-      formFactor: "ATX",
-      power: 850,
       tdp: 0,
+      compat: { psuForm: "ATX", power: 850 },
       specs: [
         { label: "Мощность", value: "850 Вт" },
         { label: "Форм-фактор", value: "ATX" },
@@ -541,9 +582,8 @@ export const components: Record<ComponentCategory, Part[]> = {
       name: "Corsair HX1000 1000 Вт",
       brand: "Corsair",
       price: 20900,
-      formFactor: "ATX",
-      power: 1000,
       tdp: 0,
+      compat: { psuForm: "ATX", power: 1000 },
       specs: [
         { label: "Мощность", value: "1000 Вт" },
         { label: "Форм-фактор", value: "ATX" },
@@ -556,9 +596,8 @@ export const components: Record<ComponentCategory, Part[]> = {
       name: "Cooler Master V SFX 600 Вт",
       brand: "Cooler Master",
       price: 11400,
-      psuForm: "SFX",
-      power: 600,
       tdp: 0,
+      compat: { psuForm: "SFX", power: 600 },
       specs: [
         { label: "Мощность", value: "600 Вт" },
         { label: "Форм-фактор", value: "SFX" },
@@ -575,8 +614,7 @@ export const components: Record<ComponentCategory, Part[]> = {
       brand: "Noctua",
       price: 9900,
       tdp: 15,
-      coolTdp: 250,
-      sizeMm: 165,
+      compat: { coolTdp: 250, sizeMm: 165 },
       specs: [
         { label: "Тип", value: "Башенный воздушный" },
         { label: "TDP", value: "до 250 Вт" },
@@ -590,8 +628,7 @@ export const components: Record<ComponentCategory, Part[]> = {
       brand: "be quiet!",
       price: 4200,
       tdp: 10,
-      coolTdp: 150,
-      sizeMm: 155,
+      compat: { coolTdp: 150, sizeMm: 155 },
       specs: [
         { label: "Тип", value: "Башенный воздушный" },
         { label: "TDP", value: "до 150 Вт" },
@@ -605,8 +642,7 @@ export const components: Record<ComponentCategory, Part[]> = {
       brand: "Arctic",
       price: 12900,
       tdp: 10,
-      coolTdp: 300,
-      sizeMm: 52,
+      compat: { coolTdp: 300, sizeMm: 52 },
       specs: [
         { label: "Тип", value: "СЖО 240 мм" },
         { label: "TDP", value: "до 300+ Вт" },
@@ -620,8 +656,7 @@ export const components: Record<ComponentCategory, Part[]> = {
       brand: "Corsair",
       price: 15900,
       tdp: 12,
-      coolTdp: 300,
-      sizeMm: 52,
+      compat: { coolTdp: 300, sizeMm: 52 },
       specs: [
         { label: "Тип", value: "СЖО 360 мм" },
         { label: "TDP", value: "до 300+ Вт" },
@@ -630,8 +665,6 @@ export const components: Record<ComponentCategory, Part[]> = {
     },
   ] as Part[],
 };
-
-/** A "cpu cooler is included" flag for non-K Intel, handled in compat engine. */
 
 export const readyPcs: ReadyPc[] = [
   {

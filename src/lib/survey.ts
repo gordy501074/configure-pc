@@ -53,7 +53,7 @@ function pick(
 function budgetScore(p: Part, budget: number, priority: Priority): number {
   if (p.price > budget) return -Infinity;
   const fit = 1 - Math.abs(budget - p.price) / Math.max(budget, 1);
-  const perf = p.benches?.[0]?.score ?? 0;
+  const perf = p.compat.benches?.[0]?.score ?? 0;
   if (priority === "price") return fit * 100;
   if (priority === "perf") return perf / 100;
   return fit * 100 + perf / 10000;
@@ -76,7 +76,10 @@ export function buildRecommendation(
   const { budget, usage, ecosystem: eco, priority } = answers;
 
   const cpuPool = components.cpu.filter(
-    (p) => (eco === "intel" ? p.socket === "LGA1700" : p.socket !== "LGA1700"),
+    (p) =>
+      eco === "intel"
+        ? p.compat.socket === "LGA1700"
+        : p.compat.socket !== "LGA1700",
   );
   chosen.cpu =
     pick(
@@ -87,12 +90,16 @@ export function buildRecommendation(
 
   if (chosen.cpu) {
     chosen.motherboard =
-      components.motherboard.find((m) => m.socket === chosen.cpu!.socket) ?? null;
+      components.motherboard.find((m) => m.compat.socket === chosen.cpu!.compat.socket) ?? null;
   }
 
   const ramTarget = budget >= 200000 && usage !== "work" ? 32 : 16;
   const ramPool = chosen.motherboard
-    ? components.ram.filter((r) => r.ramType === chosen.motherboard!.ramType && parseRamGb(r) >= ramTarget)
+    ? components.ram.filter(
+        (r) =>
+          r.compat.ramType === chosen.motherboard!.compat.ramType &&
+          parseRamGb(r) >= ramTarget,
+      )
     : components.ram;
   chosen.ram = pick("ram", components, (p) =>
     ramPool.includes(p) ? parseRamGb(p) : -Infinity,
@@ -109,7 +116,7 @@ export function buildRecommendation(
       components,
       (p) =>
         p.price <= gpuBudget
-          ? (p.benches?.[0]?.score ?? 0) * (priority === "price" ? 0.4 : 1)
+          ? (p.compat.benches?.[0]?.score ?? 0) * (priority === "price" ? 0.4 : 1)
           : -Infinity,
     ) ?? components.gpu[0];
 
@@ -120,8 +127,9 @@ export function buildRecommendation(
     null;
 
   chosen.case =
-    components.case.find((c) => c.formFactor === (chosen.motherboard?.formFactor ?? "ATX")) ??
-    components.case[0];
+    components.case.find(
+      (c) => c.compat.formFactor === (chosen.motherboard?.compat.formFactor ?? "ATX"),
+    ) ?? components.case[0];
 
   const partsPower = [chosen.cpu, chosen.gpu, chosen.motherboard, chosen.ram, chosen.storage]
     .filter((p): p is Part => !!p)
@@ -129,12 +137,12 @@ export function buildRecommendation(
   const need = partsPower * 1.6;
   const psuPool = components.psu; // include both ATX/SFX; pick by power below
   chosen.psu =
-    psuPool.find((p) => (p.power ?? 0) >= need) ?? psuPool[psuPool.length - 1] ?? null;
+    psuPool.find((p) => (p.compat.power ?? 0) >= need) ?? psuPool[psuPool.length - 1] ?? null;
 
   if (chosen.cpu) {
     const tdp = chosen.cpu.tdp;
     const capable = components.cooler
-      .filter((c) => (c.coolTdp ?? 0) >= tdp)
+      .filter((c) => (c.compat.coolTdp ?? 0) >= tdp)
       .sort((a, b) => a.price - b.price);
     if (priority === "silent") {
       const aio = capable.find((c) =>

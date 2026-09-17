@@ -49,22 +49,11 @@ export interface PartApi {
   tdp: number;
   specs: { label: string; value: string }[];
   image?: string;
-  socket?: string;
-  chipset?: string;
-  ramType?: "DDR4" | "DDR5";
-  psuForm?: "ATX" | "SFX";
-  power?: number;
-  formFactor?: "ATX" | "mATX" | "ITX";
-  gpuLength?: number;
-  cpuCoolerMaxHeight?: number;
-  includesCooler?: boolean;
-  coolTdp?: number;
-  sizeMm?: number;
-  benches?: { label: string; score: number }[];
+  compat: Part["compat"];
 }
 
 function mapPart(p: PartApi): Part {
-  const { id, category, name, brand, price, tdp, specs, image, ...compat } = p;
+  const { id, category, name, brand, price, tdp, specs, image, compat } = p;
   return {
     id,
     category,
@@ -74,7 +63,7 @@ function mapPart(p: PartApi): Part {
     tdp,
     specs,
     image,
-    ...(compat as Partial<Part>),
+    compat,
   };
 }
 

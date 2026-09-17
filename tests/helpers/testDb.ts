@@ -17,17 +17,8 @@ export const APP_BASE = process.env.APP_BASE_URL ?? `http://localhost:${APP_PORT
 
 const CATEGORIES = ["cpu", "gpu", "motherboard", "ram", "storage", "case", "psu", "cooler"] as const;
 
-function psuFormOf(p: { psuForm?: string; formFactor?: string }): string | undefined {
-  return p.psuForm ?? p.formFactor;
-}
-
 function compatJson(p: Record<string, unknown>): string {
-  return JSON.stringify({
-    socket: p.socket, chipset: p.chipset, ramType: p.ramType, psuForm: psuFormOf(p),
-    power: p.power, formFactor: p.formFactor, gpuLength: p.gpuLength,
-    cpuCoolerMaxHeight: p.cpuCoolerMaxHeight, includesCooler: p.includesCooler,
-    coolTdp: p.coolTdp, sizeMm: p.sizeMm, benches: p.benches ?? [],
-  });
+  return JSON.stringify({ v: 2, ...(p.compat as Record<string, unknown> | undefined) });
 }
 
 function specsJson(p: { specs?: unknown[] }): string {

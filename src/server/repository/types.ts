@@ -16,22 +16,25 @@ export type OrderStatus = "new" | "confirmed" | "delivery" | "done" | "alpha";
 export type UserRole = "customer" | "seller" | "admin";
 export type SellerBrandDto = { brand: string; description?: string };
 
+export type FormFactor = "ATX" | "mATX" | "ITX";
+export type RamType = "DDR4" | "DDR5";
+export type PsuForm = "ATX" | "SFX";
+
 export interface SpecItem {
   label: string;
   value: string;
 }
 
 /** Compat markers and bench scores, reconstructed from compat_json. */
-export interface Compat {
+export interface PartCompat {
   socket?: string;
   chipset?: string;
-  ramType?: "DDR4" | "DDR5";
-  psuForm?: "ATX" | "SFX";
+  ramType?: RamType;
+  psuForm?: PsuForm;
   power?: number;
-  formFactor?: "ATX" | "mATX" | "ITX";
+  formFactor?: FormFactor;
   gpuLength?: number;
   cpuCoolerMaxHeight?: number;
-  includesCooler?: boolean;
   coolTdp?: number;
   sizeMm?: number;
   benches?: { label: string; score: number }[];
@@ -61,18 +64,7 @@ export interface PartDto {
   tdp: number;
   specs: SpecItem[];
   image?: string;
-  socket?: string;
-  chipset?: string;
-  ramType?: "DDR4" | "DDR5";
-  psuForm?: "ATX" | "SFX";
-  power?: number;
-  formFactor?: "ATX" | "mATX" | "ITX";
-  gpuLength?: number;
-  cpuCoolerMaxHeight?: number;
-  includesCooler?: boolean;
-  coolTdp?: number;
-  sizeMm?: number;
-  benches?: { label: string; score: number }[];
+  compat: PartCompat;
 }
 
 export interface ReadyPcRow {
@@ -223,8 +215,26 @@ export interface AppSettingsDto {
   notifications: boolean;
 }
 
+/**
+ * Parse a `part.compat_json` row into `PartCompat`.
+ *
+ * Newer rows store the markers flat with a version flag: `{ v: 2, ...compat }`.
+ * Older rows held the same markers flat without the flag. Either way the marker
+ * fields are read directly; the `v` flag is ignored and, if absent, the object
+ * is treated as already being the compat document. Unparseable input degrades
+ * to `{}`.
+ */
+function decodeCompat(raw: string): PartCompat {
+  try {
+    const parsed = JSON.parse(raw || "{}") as Record<string, unknown>;
+    const { v: _version, ...compat } = parsed;
+    return compat as unknown as PartCompat;
+  } catch {
+    return {};
+  }
+}
+
 export function partToDto(row: PartRow): PartDto {
-  const compat = JSON.parse(row.compat_json || "{}") as Compat;
   return {
     id: row.part_id,
     category: row.category,
@@ -234,18 +244,7 @@ export function partToDto(row: PartRow): PartDto {
     tdp: row.tdp_watt,
     specs: JSON.parse(row.specs_json || "[]"),
     image: row.image_url ?? undefined,
-    socket: compat.socket,
-    chipset: compat.chipset,
-    ramType: compat.ramType,
-    psuForm: compat.psuForm,
-    power: compat.power,
-    formFactor: compat.formFactor,
-    gpuLength: compat.gpuLength,
-    cpuCoolerMaxHeight: compat.cpuCoolerMaxHeight,
-    includesCooler: compat.includesCooler,
-    coolTdp: compat.coolTdp,
-    sizeMm: compat.sizeMm,
-    benches: compat.benches,
+    compat: decodeCompat(row.compat_json),
   };
 }
 

@@ -1,7 +1,7 @@
--- Confi SQLite schema (STRICT, WAL). Version 4.
+-- Confi SQLite schema (STRICT, WAL). Version 5.
 -- DDL per plan section 2. Applied idempotently by db:init / db:seed.
 
-PRAGMA user_version = 4;
+PRAGMA user_version = 5;
 PRAGMA journal_mode = WAL;
 
 CREATE TABLE IF NOT EXISTS part (
@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS part (
   brand         TEXT NOT NULL,
   price_kopecks INTEGER NOT NULL CHECK (price_kopecks >= 0),
   tdp_watt      INTEGER NOT NULL DEFAULT 0 CHECK (tdp_watt BETWEEN 0 AND 65355),
+  -- Stores the PartCompat document as JSON: { v: 2, ...compat } (see src/types).
   compat_json   TEXT NOT NULL,
   specs_json    TEXT NOT NULL DEFAULT '[]',
   image_url     TEXT,
