@@ -6,7 +6,7 @@ import { mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { components, readyPcs } from "../../src/data/mock.ts";
-import { migrateSellerBrandDescription, migrateUserAccount } from "../../db/migrate.ts";
+import { migrateSellerBrandDescription, migrateUserAccount, migrateVendorAndAvailability } from "../../db/migrate.ts";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -25,16 +25,52 @@ function specsJson(p: { specs?: unknown[] }): string {
   return JSON.stringify(p.specs ?? []);
 }
 
+function composeName(vendorName: string, brand: string): string {
+  const v = String(vendorName ?? "").trim();
+  const b = String(brand ?? "").trim();
+  if (v && b) return `${v} ${b}`;
+  return v || b;
+}
+
+function modelFromName(name: string, vendorName: string): string {
+  const n = String(name ?? "").trim();
+  const v = String(vendorName ?? "").trim();
+  if (!v) return n;
+  if (n.toLowerCase().startsWith(v.toLowerCase())) return n.slice(v.length).trim();
+  return n;
+}
+
 function seed(db: Database.Database): void {
   db.exec("PRAGMA foreign_keys = ON");
+  const getVendorByName = db.prepare(
+    `SELECT vendor_id FROM vendor WHERE name = ? COLLATE NOCASE`,
+  );
+  const insertVendor = db.prepare(`
+    INSERT INTO vendor (vendor_id, name) VALUES (@vendor_id, @name)
+    ON CONFLICT(name) DO UPDATE SET name=excluded.name
+  `);
+  const vendorIdFor = (brand: string): string => {
+    const hex = Buffer.from(String(brand).trim().toLowerCase(), "utf8").toString("hex").slice(0, 24).padEnd(12, "0");
+    return `ven-${hex}`;
+  };
+  const ensureVendor = (brand: string): string | null => {
+    const name = String(brand).trim();
+    if (!name) return null;
+    const existing = getVendorByName.get(name) as { vendor_id: string } | undefined;
+    if (existing) return existing.vendor_id;
+    const vid = vendorIdFor(name);
+    insertVendor.run({ vendor_id: vid, name });
+    return vid;
+  };
   const insertPart = db.prepare(`
-    INSERT INTO part (part_id, category, name, brand, price_kopecks, tdp_watt, compat_json, specs_json, image_url, is_active)
-    VALUES (@part_id, @category, @name, @brand, @price_kopecks, @tdp_watt, @compat_json, @specs_json, @image_url, 1)
+    INSERT INTO part (part_id, category, name, brand, vendor_id, price_kopecks, tdp_watt, compat_json, specs_json, image_url, is_active, is_available)
+    VALUES (@part_id, @category, @name, @brand, @vendor_id, @price_kopecks, @tdp_watt, @compat_json, @specs_json, @image_url, 1, 1)
     ON CONFLICT(part_id) DO UPDATE SET
       category=excluded.category, name=excluded.name, brand=excluded.brand,
+      vendor_id=excluded.vendor_id,
       price_kopecks=excluded.price_kopecks, tdp_watt=excluded.tdp_watt,
       compat_json=excluded.compat_json, specs_json=excluded.specs_json,
-      image_url=excluded.image_url, is_active=1
+      image_url=excluded.image_url, is_active=1, is_available=1
   `);
   const insertReady = db.prepare(`
     INSERT INTO ready_pc (ready_pc_id, name, brand, usage, price_kopecks, tdp_watt, summary, specs_json, image_url, in_stock, rating, is_active)
@@ -75,13 +111,16 @@ function seed(db: Database.Database): void {
     db.prepare("DELETE FROM ready_pc_part").run();
     db.prepare("DELETE FROM ready_pc").run();
     db.prepare("DELETE FROM part").run();
+    db.prepare("DELETE FROM vendor").run();
 
     let n = 0;
     for (const cat of CATEGORIES) {
       for (const p of (components as Record<string, unknown[]>)[cat] ?? []) {
         const row = p as Record<string, unknown> & { id: string; name: string; brand: string; price: number; tdp: number };
+        const model = modelFromName(row.name, row.brand);
         insertPart.run({
-          part_id: row.id, category: cat, name: row.name, brand: row.brand,
+          part_id: row.id, category: cat, name: composeName(row.brand, model), brand: model,
+          vendor_id: ensureVendor(row.brand),
           price_kopecks: Math.round(row.price * 100), tdp_watt: Math.round(row.tdp),
           compat_json: compatJson(row), specs_json: specsJson(row as { specs?: unknown[] }),
           image_url: row.image ?? null,
@@ -98,6 +137,7 @@ function seed(db: Database.Database): void {
         image_url: rp.image ?? null, in_stock: rp.inStock ? 1 : 0, rating: rp.rating,
       });
       for (const { category, part } of rp.parts) {
+        if (!part) continue;
         insertReadyPart.run({ ready_pc_id: rp.id, part_id: part.id, category });
       }
     }
@@ -131,6 +171,7 @@ export function initTestDb(dbPath = TEST_DB_PATH): string {
   db.exec(readFileSync(join(root, "db", "schema.sql"), "utf8"));
   migrateUserAccount(db);
   migrateSellerBrandDescription(db);
+  migrateVendorAndAvailability(db);
   seed(db);
   db.close();
   return dbPath;

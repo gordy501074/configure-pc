@@ -184,18 +184,36 @@ export default function AutoResult() {
         <Card className="gap-4 p-4">
           <h2 className="text-lg font-semibold">Сводка</h2>
           <div className="flex flex-col">
-            {cfg.parts.map(({ category, part }) => (
-              <div
-                key={category}
-                className="flex items-center justify-between gap-3 border-b py-2 text-sm"
-              >
-                <span className="text-muted-foreground">
-                  {CATEGORY_LABELS[category] ?? category}
-                </span>
-                <span className="truncate font-medium">{part.name}</span>
-                <span className="whitespace-nowrap">{formatPrice(part.price)}</span>
-              </div>
-            ))}
+            {cfg.parts.map(({ category, part }) => {
+              if (!part) {
+                return (
+                  <div
+                    key={category}
+                    className="flex items-center justify-between gap-3 border-b py-2 text-sm"
+                  >
+                    <span className="text-muted-foreground">
+                      {CATEGORY_LABELS[category] ?? category}
+                    </span>
+                    <span className="truncate font-medium">
+                      Компонент более недоступен для заказа
+                    </span>
+                    <span className="whitespace-nowrap">—</span>
+                  </div>
+                );
+              }
+              return (
+                <div
+                  key={category}
+                  className="flex items-center justify-between gap-3 border-b py-2 text-sm"
+                >
+                  <span className="text-muted-foreground">
+                    {CATEGORY_LABELS[category] ?? category}
+                  </span>
+                  <span className="truncate font-medium">{part.name}</span>
+                  <span className="whitespace-nowrap">{formatPrice(part.price)}</span>
+                </div>
+              );
+            })}
             <div className="flex items-center justify-between gap-3 py-2 font-semibold">
               <span>Итого</span>
               <span>{stats.totalTdp} Вт</span>

@@ -10,7 +10,7 @@ import { configStats } from "../lib/compatibility";
 import { saveOrderRemote } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { uid } from "../lib/session";
-import type { Config, Order, OrderItem } from "../types";
+import type { ComponentCategory, Config, Order, OrderItem, Part } from "../types";
 
 interface InstallmentState {
   orderTitle?: string;
@@ -68,7 +68,7 @@ export default function InstallmentCheckout() {
           count: state.line.count,
         },
       ]
-    : parts.map(({ part }) => ({
+    : parts.filter((cp): cp is { category: ComponentCategory; part: Part } => !!cp.part).map(({ part }) => ({
         kind: "config" as const,
         refId: part.id,
         name: part.name,
@@ -291,15 +291,27 @@ export default function InstallmentCheckout() {
             <h2 className="text-lg font-semibold">{state.orderTitle ?? "Ваш заказ"}</h2>
             <div className="flex flex-col gap-2">
               {parts.length > 0 ? (
-                parts.map(({ category, part }) => (
-                  <div
-                    key={category}
-                    className="flex items-center justify-between gap-3 text-sm"
-                  >
-                    <span className="truncate text-muted-foreground">{part.name}</span>
-                    <span className="whitespace-nowrap">{formatPrice(part.price)}</span>
-                  </div>
-                ))
+                parts.map(({ category, part }) => {
+                  if (!part) {
+                    return (
+                      <div key={category} className="flex items-center justify-between gap-3 text-sm">
+                        <span className="truncate text-muted-foreground">
+                          Компонент более недоступен для заказа
+                        </span>
+                        <span className="whitespace-nowrap">—</span>
+                      </div>
+                    );
+                  }
+                  return (
+                    <div
+                      key={category}
+                      className="flex items-center justify-between gap-3 text-sm"
+                    >
+                      <span className="truncate text-muted-foreground">{part.name}</span>
+                      <span className="whitespace-nowrap">{formatPrice(part.price)}</span>
+                    </div>
+                  );
+                })
               ) : state.line ? (
                 <div className="flex items-center justify-between gap-3 text-sm">
                   <span className="truncate text-muted-foreground">{state.line.name}</span>

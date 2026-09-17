@@ -76,7 +76,6 @@ export function ComponentPicker({
                 >
                   <span className="flex min-w-0 flex-col">
                     <span className="truncate font-medium">{p.name}</span>
-                    <span className="text-sm text-muted-foreground">{p.brand}</span>
                   </span>
                   <span className="flex shrink-0 flex-col items-end text-sm">
                     <span className="font-semibold">{formatPrice(p.price)}</span>

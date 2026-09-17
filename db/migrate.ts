@@ -128,3 +128,156 @@ export function migrateSellerBrandDescription(db: Database.Database): void {
     db.pragma("foreign_keys = ON");
   }
 }
+
+// ---- v6: vendor dictionary + part vendor_id / is_available + FK SET NULL ----
+
+/**
+ * True when the schema has already reached v6: `vendor` table exists, `part`
+ * has `vendor_id` and `is_available`, and both junction FKs are ON DELETE SET NULL.
+ */
+function vendorAndAvailabilityIsMigrated(db: Database.Database): boolean {
+  const vendor = db
+    .prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='vendor'`)
+    .get();
+  if (!vendor) return false;
+  const part = db
+    .prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='part'`)
+    .get() as { sql: string } | undefined;
+  if (!part || !/vendor_id/i.test(part.sql) || !/is_available/i.test(part.sql)) {
+    return false;
+  }
+  const cfgPart = db
+    .prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='config_part'`)
+    .get() as { sql: string } | undefined;
+  if (!cfgPart || !/SET NULL/i.test(cfgPart.sql)) return false;
+  const readyPart = db
+    .prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='ready_pc_part'`)
+    .get() as { sql: string } | undefined;
+  return !!readyPart && /SET NULL/i.test(readyPart.sql);
+}
+
+/**
+ * Idempotent v6 migration: introduce the `vendor` dictionary, add `vendor_id`
+ * / `is_available` to `part`, and switch the `config_part` / `ready_pc_part`
+ * FKs to `part ON DELETE SET NULL`.
+ *
+ * Because STRICT SQLite cannot alter columns/constraints in place, each table is
+ * rebuilt via the documented FK-off recipe (CREATE -> INSERT -> DROP -> RENAME).
+ * Foreign keys are populated from the existing `brand` values (brands become
+ * vendor trademarks); `is_available` defaults to 1 for every part.
+ */
+export function migrateVendorAndAvailability(db: Database.Database): void {
+  if (vendorAndAvailabilityIsMigrated(db)) return;
+
+  const stamp = `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+  const tmpVendor = `new_vendor_${stamp}`;
+  const tmpPart = `new_part_${stamp}`;
+  const tmpConfigPart = `new_config_part_${stamp}`;
+  const tmpReadyPart = `new_ready_pc_part_${stamp}`;
+
+  db.pragma("foreign_keys = OFF");
+  db.pragma("defer_foreign_keys = ON");
+  try {
+    db.transaction(() => {
+      db.exec(`
+        CREATE TABLE ${tmpVendor} (
+          vendor_id  TEXT PRIMARY KEY,
+          name       TEXT NOT NULL COLLATE NOCASE UNIQUE,
+          created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+        ) STRICT
+      `);
+      // Populate vendors from the unique, non-empty part.brand values (trademarks),
+      // collapsing case (Intel == intel) via a case-insensitive group.
+      db.exec(`
+        INSERT INTO ${tmpVendor} (vendor_id, name)
+        SELECT 'ven-' || substr(lower(hex(randomBlob(16))), 1, 12), MIN(trim(brand))
+        FROM part
+        WHERE trim(brand) <> ''
+        GROUP BY lower(trim(brand))
+      `);
+
+      db.exec(`
+        CREATE TABLE ${tmpPart} (
+          part_id       TEXT PRIMARY KEY,
+          category      TEXT NOT NULL CHECK (category IN ('cpu','gpu','motherboard','ram','storage','case','psu','cooler')),
+          name          TEXT NOT NULL,
+          brand         TEXT NOT NULL,
+          vendor_id     TEXT,
+          price_kopecks INTEGER NOT NULL CHECK (price_kopecks >= 0),
+          tdp_watt      INTEGER NOT NULL DEFAULT 0 CHECK (tdp_watt BETWEEN 0 AND 65355),
+          compat_json   TEXT NOT NULL,
+          specs_json    TEXT NOT NULL DEFAULT '[]',
+          image_url     TEXT,
+          is_active     INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0,1)),
+          is_available  INTEGER NOT NULL DEFAULT 1 CHECK (is_available IN (0,1)),
+          created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+          FOREIGN KEY (vendor_id) REFERENCES ${tmpVendor}(vendor_id) ON DELETE SET NULL
+        ) STRICT
+      `);
+      db.exec(`
+        INSERT INTO ${tmpPart} (part_id, category, name, brand, vendor_id, price_kopecks, tdp_watt, compat_json, specs_json, image_url, is_active, is_available, created_at)
+        SELECT p.part_id, p.category, p.name, p.brand, v.vendor_id, p.price_kopecks, p.tdp_watt,
+               p.compat_json, p.specs_json, p.image_url, p.is_active, 1, p.created_at
+        FROM part p
+        LEFT JOIN ${tmpVendor} v ON v.name = trim(p.brand) COLLATE NOCASE
+      `);
+      db.exec(`DROP TABLE part`);
+
+      db.exec(`
+        CREATE TABLE ${tmpConfigPart} (
+          config_id TEXT NOT NULL,
+          category  TEXT NOT NULL CHECK (category IN ('cpu','gpu','motherboard','ram','storage','case','psu','cooler')),
+          part_id   TEXT,
+          PRIMARY KEY (config_id, category),
+          FOREIGN KEY (config_id) REFERENCES config(config_id) ON DELETE CASCADE,
+          FOREIGN KEY (part_id) REFERENCES ${tmpPart}(part_id) ON DELETE SET NULL
+        ) STRICT, WITHOUT ROWID
+      `);
+      db.exec(`
+        INSERT INTO ${tmpConfigPart} (config_id, category, part_id)
+        SELECT config_id, category, part_id FROM config_part
+      `);
+      db.exec(`DROP TABLE config_part`);
+
+      db.exec(`
+        CREATE TABLE ${tmpReadyPart} (
+          ready_pc_id TEXT NOT NULL,
+          part_id     TEXT,
+          category    TEXT NOT NULL,
+          PRIMARY KEY (ready_pc_id, category),
+          UNIQUE (ready_pc_id, part_id),
+          FOREIGN KEY (ready_pc_id) REFERENCES ready_pc(ready_pc_id) ON DELETE CASCADE,
+          FOREIGN KEY (part_id) REFERENCES ${tmpPart}(part_id) ON DELETE SET NULL
+        ) STRICT, WITHOUT ROWID
+      `);
+      db.exec(`
+        INSERT INTO ${tmpReadyPart} (ready_pc_id, part_id, category)
+        SELECT ready_pc_id, part_id, category FROM ready_pc_part
+      `);
+      db.exec(`DROP TABLE ready_pc_part`);
+
+      db.exec(`DROP TABLE IF EXISTS part`);
+      db.exec(`DROP TABLE IF EXISTS config_part`);
+      db.exec(`DROP TABLE IF EXISTS ready_pc_part`);
+      db.exec(`DROP TABLE IF EXISTS vendor`);
+
+      db.exec(`ALTER TABLE ${tmpVendor} RENAME TO vendor`);
+      db.exec(`ALTER TABLE ${tmpPart} RENAME TO part`);
+      db.exec(`ALTER TABLE ${tmpConfigPart} RENAME TO config_part`);
+      db.exec(`ALTER TABLE ${tmpReadyPart} RENAME TO ready_pc_part`);
+
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_part_active ON part(category, is_active)`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_part_vendor ON part(vendor_id)`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_vendor_name ON vendor(name)`);
+    })();
+
+    const integrity = db.exec(`PRAGMA foreign_key_check;`) as unknown as [];
+    if (Array.isArray(integrity) && integrity.length > 0) {
+      throw new Error(
+        `vendor migration left FK violations: ${JSON.stringify(integrity)}`,
+      );
+    }
+  } finally {
+    db.pragma("foreign_keys = ON");
+  }
+}

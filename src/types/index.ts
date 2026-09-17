@@ -55,6 +55,9 @@ export interface Part {
   category: ComponentCategory;
   name: string;
   brand: string;
+  vendorId?: string;
+  /** False when deactivated or unavailable-for-order. */
+  available?: boolean;
   price: number;
   specs: SpecItem[];
   /** In watts. */
@@ -64,9 +67,20 @@ export interface Part {
   compat: PartCompat;
 }
 
+/** Why a config slot can't be ordered. */
+export type UnavailableReason = "deactivated" | "missing";
+
+/** A slot in a config/ready PC. When `part` is null, the component is unavailable. */
 export interface ConfigPart {
   category: ComponentCategory;
-  part: Part;
+  part: Part | null;
+  unavailableReason?: UnavailableReason;
+}
+
+/** A brand / trademark dictionary entry. */
+export interface Vendor {
+  id: string;
+  name: string;
 }
 
 /** A full configuration (list of chosen parts). */

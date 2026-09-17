@@ -8,7 +8,7 @@ import { readFileSync, appendFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { components, readyPcs, seededReviews } from "../src/data/mock.ts";
-import { migrateSellerBrandDescription, migrateUserAccount } from "./migrate.ts";
+import { migrateSellerBrandDescription, migrateUserAccount, migrateVendorAndAvailability } from "./migrate.ts";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const DB_PATH = join(root, "db", "confi.db");
@@ -52,6 +52,7 @@ db.pragma("journal_mode = WAL");
 db.exec(readFileSync(SCHEMA, "utf8"));
 migrateUserAccount(db);
 migrateSellerBrandDescription(db);
+migrateVendorAndAvailability(db);
 
 /** Validate a single part row; returns null to skip. */
 function validatePart(p) {
@@ -61,25 +62,70 @@ function validatePart(p) {
   if (!CATEGORIES.includes(p.category)) return quarantine(p.id, `skipped: bad category ${p.category}`), null;
   if (!Number.isFinite(p.price) || p.price < 0) return quarantine(p.id, `skipped: bad price ${p.price}`), null;
   if (!Number.isFinite(p.tdp) || p.tdp < 0 || p.tdp > 65355) return quarantine(p.id, `skipped: bad tdp ${p.tdp}`), null;
+  // vendorship: торговая марка = p.brand; модель = name минус марка; name = марка + модель.
+  const brand = modelFromName(p.name, p.brand);
   return {
     part_id: p.id,
     category: p.category,
-    name: p.name,
-    brand: p.brand,
+    name: composeName(p.brand, brand),
+    brand,
     price_kopecks: Math.round(p.price * 100),
     tdp_watt: Math.round(p.tdp),
   };
 }
 
+/** Compose a full display name from a trademark and a model, e.g. "Intel Core i5-13400F". */
+function composeName(vendorName, brand) {
+  const v = String(vendorName ?? "").trim();
+  const b = String(brand ?? "").trim();
+  if (v && b) return `${v} ${b}`;
+  return v || b;
+}
+
+/** Strip a leading trademark from a full name, returning the model/line name. */
+function modelFromName(name, vendorName) {
+  const n = String(name ?? "").trim();
+  const v = String(vendorName ?? "").trim();
+  if (!v) return n;
+  if (n.toLowerCase().startsWith(v.toLowerCase())) return n.slice(v.length).trim();
+  return n;
+}
+
+const getVendorByName = db.prepare(`
+  SELECT vendor_id FROM vendor WHERE name = ? COLLATE NOCASE
+`);
+
+const insertVendor = db.prepare(`
+  INSERT INTO vendor (vendor_id, name)
+  VALUES (@vendor_id, @name)
+  ON CONFLICT(name) DO UPDATE SET name=excluded.name
+`);
+
 const insertPart = db.prepare(`
-  INSERT INTO part (part_id, category, name, brand, price_kopecks, tdp_watt, compat_json, specs_json, image_url, is_active)
-  VALUES (@part_id, @category, @name, @brand, @price_kopecks, @tdp_watt, @compat_json, @specs_json, @image_url, 1)
+  INSERT INTO part (part_id, category, name, brand, vendor_id, price_kopecks, tdp_watt, compat_json, specs_json, image_url, is_active, is_available)
+  VALUES (@part_id, @category, @name, @brand, @vendor_id, @price_kopecks, @tdp_watt, @compat_json, @specs_json, @image_url, 1, 1)
   ON CONFLICT(part_id) DO UPDATE SET
     category=excluded.category, name=excluded.name, brand=excluded.brand,
+    vendor_id=excluded.vendor_id,
     price_kopecks=excluded.price_kopecks, tdp_watt=excluded.tdp_watt,
     compat_json=excluded.compat_json, specs_json=excluded.specs_json,
-    image_url=excluded.image_url, is_active=1
+    image_url=excluded.image_url, is_active=1, is_available=1
 `);
+
+/** Ensure a vendor row exists for the brand, returning its real stored id. */
+function ensureVendor(brand) {
+  const name = String(brand).trim();
+  if (!name) return null;
+  // Reuse an existing vendor (e.g. created by the v6 migration or the API with a
+  // random id) so the returned id always matches the stored row.
+  const existing = getVendorByName.get(name);
+  if (existing) return existing.vendor_id;
+  // Fall back to a random id (same family as the migration/repository) to avoid
+  // colliding with ids that already exist under a different name.
+  const vid = `ven-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  insertVendor.run({ vendor_id: vid, name });
+  return vid;
+}
 
 const insertReady = db.prepare(`
   INSERT INTO ready_pc (ready_pc_id, name, brand, usage, price_kopecks, tdp_watt, summary, specs_json, image_url, in_stock, rating, is_active)
@@ -132,6 +178,7 @@ const seedAll = db.transaction(() => {
       if (!row) continue;
       insertPart.run({
         ...row,
+        vendor_id: ensureVendor(p.brand),
         compat_json: compatJson(p),
         specs_json: specsJson(p),
         image_url: p.image ?? null,
@@ -192,6 +239,10 @@ const seedAll = db.transaction(() => {
     brand: "Confi",
     description: "Собственные сборки Confi",
   });
+
+  // Remove vendors no longer referenced by any part (e.g. model names wrongly
+  // created as vendors by earlier buggy seeds, or leftovers from deleted parts).
+  db.exec(`DELETE FROM vendor WHERE vendor_id NOT IN (SELECT vendor_id FROM part WHERE vendor_id IS NOT NULL)`);
 
   return partCount;
 });

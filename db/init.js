@@ -8,7 +8,7 @@ import Database from "better-sqlite3";
 import { readFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { migrateSellerBrandDescription, migrateUserAccount } from "./migrate.ts";
+import { migrateSellerBrandDescription, migrateUserAccount, migrateVendorAndAvailability } from "./migrate.ts";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const DB_PATH = join(root, "db", "confi.db");
@@ -22,6 +22,7 @@ db.pragma("journal_mode = WAL");
 db.exec(readFileSync(SCHEMA, "utf8"));
 migrateUserAccount(db);
 migrateSellerBrandDescription(db);
+migrateVendorAndAvailability(db);
 
 const tables = db
   .prepare("SELECT count(*) AS c FROM sqlite_master WHERE type='table'")

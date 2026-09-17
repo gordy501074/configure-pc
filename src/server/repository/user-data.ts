@@ -228,21 +228,30 @@ export function createUserRepository(db: Database): UserDataRepository {
 
   function configPartsFor(configId: string): ConfigPartDto[] {
     const links = configPartIdsStmt.all(configId) as {
-      part_id: string;
+      part_id: string | null;
       category: string;
     }[];
-    const rows = links
-      .map((l) => db.prepare(`SELECT * FROM part WHERE part_id = ?`).get(l.part_id))
+    const resolved = links
+      .map((l) =>
+        l.part_id
+          ? (db.prepare(`SELECT * FROM part WHERE part_id = ?`).get(l.part_id) as
+              | PartRow
+              | undefined)
+          : undefined,
+      )
       .filter((r): r is PartRow => !!r);
-    const byId = new Map(rows.map((r) => [r.part_id, partToDto(r)]));
-    return links
-      .map((l) => {
-        const part = byId.get(l.part_id);
-        return part
-          ? { category: l.category as ConfigPartDto["category"], part }
-          : null;
-      })
-      .filter((p): p is ConfigPartDto => !!p);
+    const byId = new Map(resolved.map((r) => [r.part_id, partToDto(r)]));
+    return links.map((l) => {
+      const category = l.category as ConfigPartDto["category"];
+      if (!l.part_id) {
+        return { category, part: null, unavailableReason: "missing" };
+      }
+      const part = byId.get(l.part_id);
+      if (!part || !part.available) {
+        return { category, part: null, unavailableReason: "deactivated" };
+      }
+      return { category, part };
+    });
   }
 
   return {

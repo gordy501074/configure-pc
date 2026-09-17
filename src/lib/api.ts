@@ -8,10 +8,13 @@ import type {
   Config,
   Order,
   Part,
+  PartCompat,
   ReadyPc,
   Review,
   SellerBrand,
+  SpecItem,
   User,
+  Vendor,
 } from "../types";
 
 const BASE = "/api";
@@ -45,20 +48,24 @@ export interface PartApi {
   category: ComponentCategory;
   name: string;
   brand: string;
+  vendorId?: string;
+  available?: boolean;
   price: number;
   tdp: number;
-  specs: { label: string; value: string }[];
+  specs: SpecItem[];
   image?: string;
-  compat: Part["compat"];
+  compat: PartCompat;
 }
 
 function mapPart(p: PartApi): Part {
-  const { id, category, name, brand, price, tdp, specs, image, compat } = p;
+  const { id, category, name, brand, vendorId, available, price, tdp, specs, image, compat } = p;
   return {
     id,
     category,
     name,
     brand,
+    vendorId,
+    available,
     price,
     tdp,
     specs,
@@ -104,7 +111,17 @@ interface ReadyPcApi {
   inStock: boolean;
   rating: number;
   reviewCount: number;
-  parts: { category: ComponentCategory; part: PartApi }[];
+  parts: { category: ComponentCategory; part: PartApi | null; unavailableReason?: "deactivated" | "missing" }[];
+}
+
+function mapConfigPart(
+  c: { category: ComponentCategory; part: PartApi | null; unavailableReason?: "deactivated" | "missing" },
+): { category: ComponentCategory; part: Part | null; unavailableReason?: "deactivated" | "missing" } {
+  return {
+    category: c.category,
+    part: c.part ? mapPart(c.part) : null,
+    unavailableReason: c.unavailableReason,
+  };
 }
 
 function mapReady(p: ReadyPcApi): ReadyPc {
@@ -121,7 +138,7 @@ function mapReady(p: ReadyPcApi): ReadyPc {
     inStock: p.inStock,
     rating: p.rating,
     reviewCount: p.reviewCount,
-    parts: p.parts.map(({ category, part }) => ({ category, part: mapPart(part) })),
+    parts: p.parts.map(mapConfigPart),
   };
 }
 
@@ -198,7 +215,8 @@ export async function getSession(sessionId: string): Promise<SessionResult | nul
 
 interface ConfigPartApi {
   category: ComponentCategory;
-  part: PartApi;
+  part: PartApi | null;
+  unavailableReason?: "deactivated" | "missing";
 }
 
 interface ConfigApi {
@@ -219,7 +237,7 @@ function mapConfig(c: ConfigApi): Config {
     usage: c.usage,
     createdAt: c.createdAt,
     updatedAt: c.updatedAt,
-    parts: c.parts.map(({ category, part }) => ({ category, part: mapPart(part) })),
+    parts: c.parts.map(mapConfigPart),
   };
 }
 
@@ -231,7 +249,11 @@ function configToApi(c: Config): ConfigApi {
     usage: c.usage,
     createdAt: c.createdAt,
     updatedAt: c.updatedAt,
-    parts: c.parts.map(({ category, part }) => ({ category, part: part as PartApi })),
+    parts: c.parts.map(({ category, part, unavailableReason }) => ({
+      category,
+      part: (part ? part : null) as PartApi | null,
+      unavailableReason,
+    })),
   };
 }
 
@@ -241,7 +263,7 @@ export async function fetchConfigs(userId: string): Promise<Config[]> {
 }
 
 export async function saveConfigRemote(config: Config, userId: string): Promise<Config> {
-  const body = { ...configToApi(config), parts: configToApi(config).parts.map(({ category, part }) => ({ category, part_id: part.id })) };
+  const body = { ...configToApi(config), parts: configToApi(config).parts.filter((p) => p.part).map(({ category, part }) => ({ category, part_id: part!.id })) };
   return mapConfig(await req<ConfigApi>(`/configs/${encodeURIComponent(config.id)}?userId=${encodeURIComponent(userId)}`, {
     method: "PUT",
     body: JSON.stringify({
@@ -397,5 +419,58 @@ export async function deleteSellerBrand(
 ): Promise<void> {
   await req<void>(`/seller/${encodeURIComponent(sellerId)}/brands/${encodeURIComponent(brand)}`, {
     method: "DELETE",
+  });
+}
+
+// ---- Vendors & components (seller/admin) ----
+
+export async function fetchVendors(): Promise<Vendor[]> {
+  return req<Vendor[]>("/vendors");
+}
+
+export interface CreatePartInput {
+  category: ComponentCategory;
+  brand: string;
+  vendor: string;
+  price: number;
+  tdp: number;
+  compat: PartCompat;
+  specs: SpecItem[];
+  image?: string;
+}
+
+export async function createPart(input: CreatePartInput): Promise<Part> {
+  return mapPart(await req<PartApi>("/components", {
+    method: "POST",
+    body: JSON.stringify(input),
+  }));
+}
+
+export interface UpdatePartInput {
+  brand?: string;
+  vendor?: string;
+  price?: number;
+  tdp?: number;
+  compat?: PartCompat;
+  specs?: SpecItem[];
+  image?: string;
+}
+
+export async function updatePart(id: string, patch: UpdatePartInput): Promise<Part> {
+  return mapPart(await req<PartApi>(`/components/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: JSON.stringify(patch),
+  }));
+}
+
+export async function deactivatePart(id: string): Promise<void> {
+  await req<void>(`/components/${encodeURIComponent(id)}/deactivate`, {
+    method: "POST",
+  });
+}
+
+export async function initializeCatalog(): Promise<{ inserted: number; deleted: number }> {
+  return req<{ inserted: number; deleted: number }>("/catalog/initialize", {
+    method: "POST",
   });
 }

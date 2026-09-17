@@ -8,6 +8,7 @@ import {
   checkPartCompatibility,
   validateConfig,
   isConfigComplete,
+  isPartAvailable,
 } from "../../src/lib/compatibility.ts";
 import { components } from "../../src/data/mock.ts";
 import type { ComponentCategory, Part } from "../../src/types/index.ts";
@@ -178,7 +179,56 @@ test("validateConfig keys issues by category/part", () => {
   assert.match(cpuSocket?.reason ?? "", /Сокет/);
 });
 
-test("isConfigComplete requires all mandatory categories and clean validation", () => {
+test("isPartAvailable defaults true and respects the available flag", () => {
+  const base = cat("cpu-r5-5600");
+  assert.equal(isPartAvailable(base), true);
+  assert.equal(isPartAvailable({ ...base, available: true }), true);
+  assert.equal(isPartAvailable({ ...base, available: false }), false);
+});
+
+test("configStats counts only available parts", () => {
+  const cpu = cat("cpu-r5-5600");
+  const gpu = cat("gpu-rx-7600");
+  const s = configStats({
+    parts: [
+      { category: "cpu", part: { ...cpu, available: false } },
+      { category: "gpu", part: gpu },
+    ],
+  });
+  assert.equal(s.totalPrice, gpu.price);
+  assert.equal(s.totalTdp, gpu.tdp);
+});
+
+test("configStats skips null parts (missing/inaccessible slots)", () => {
+  const cpu = cat("cpu-r5-5600");
+  const s = configStats({
+    parts: [
+      { category: "cpu", part: cpu },
+      { category: "gpu", part: null },
+    ],
+  });
+  assert.equal(s.totalPrice, cpu.price);
+  assert.equal(s.totalTdp, cpu.tdp);
+});
+
+test("isConfigComplete is false when a chosen part is unavailable", () => {
+  const base = chosen({
+    cpu: cat("cpu-r5-5600"),
+    gpu: cat("gpu-rx-7600"),
+    motherboard: cat("mb-b550-am4"),
+    ram: cat("ram-ddr4-16"),
+    storage: cat("ssd-1tb-nvme"),
+    case: cat("case-matx"),
+    psu: cat("psu-650"),
+    cooler: cat("cooler-air"),
+  });
+  assert.equal(isConfigComplete(base), true);
+  assert.equal(
+    isConfigComplete({ ...base, cpu: { ...base.cpu!, available: false } }),
+    false,
+  );
+});
+  test("isConfigComplete requires all mandatory categories and clean validation", () => {
   assert.equal(isConfigComplete(chosen({})), false);
   assert.equal(isConfigComplete(chosen({ cpu: cat("cpu-r5-5600") })), false);
   // Full incompatible config (mismatched socket) is not complete.

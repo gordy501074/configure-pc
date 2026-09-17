@@ -62,7 +62,9 @@ export default function CustomConfig() {
       const fromReady = (location.state as { fromReady?: Config } | null)?.fromReady;
       if (fromReady) {
         const next: Record<ComponentCategory, Part | null> = { ...EMPTY_CHOSEN };
-        for (const { category, part } of fromReady.parts) next[category] = part;
+        for (const { category, part } of fromReady.parts) {
+          if (part) next[category] = part;
+        }
         setChosen(next);
         setName(`${fromReady.name} — копия`);
         window.history.replaceState({}, "");
@@ -212,7 +214,7 @@ export default function CustomConfig() {
                     <div className="flex min-w-0 flex-col">
                       <span className="truncate font-medium">{part.name}</span>
                       <span className="text-sm text-muted-foreground">
-                        {part.brand} · {formatWatts(part.tdp)}
+                        {formatWatts(part.tdp)}
                       </span>
                     </div>
                     <span className="whitespace-nowrap font-semibold">

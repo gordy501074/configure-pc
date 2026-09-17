@@ -16,6 +16,21 @@ export type OrderStatus = "new" | "confirmed" | "delivery" | "done" | "alpha";
 export type UserRole = "customer" | "seller" | "admin";
 export type SellerBrandDto = { brand: string; description?: string };
 
+/** A vendor (trademark) dictionary entry. */
+export interface VendorRow {
+  vendor_id: string;
+  name: string;
+  created_at: string;
+}
+
+export interface VendorDto {
+  id: string;
+  name: string;
+}
+
+/** Why a part in a saved config can't be ordered. */
+export type UnavailableReason = "deactivated" | "missing";
+
 export type FormFactor = "ATX" | "mATX" | "ITX";
 export type RamType = "DDR4" | "DDR5";
 export type PsuForm = "ATX" | "SFX";
@@ -45,12 +60,14 @@ export interface PartRow {
   category: ComponentCategory;
   name: string;
   brand: string;
+  vendor_id: string | null;
   price_kopecks: number;
   tdp_watt: number;
   compat_json: string;
   specs_json: string;
   image_url: string | null;
   is_active: number;
+  is_available: number;
   created_at: string;
 }
 
@@ -60,6 +77,8 @@ export interface PartDto {
   category: ComponentCategory;
   name: string;
   brand: string;
+  vendorId?: string;
+  available: boolean;
   price: number;
   tdp: number;
   specs: SpecItem[];
@@ -141,7 +160,9 @@ export interface ConfigDto {
 
 export interface ConfigPartDto {
   category: ComponentCategory;
-  part: PartDto;
+  part: PartDto | null;
+  /** When `part` is null, the reason the slot is unavailable. */
+  unavailableReason?: UnavailableReason;
 }
 
 export interface OrderItemRow {
@@ -240,6 +261,8 @@ export function partToDto(row: PartRow): PartDto {
     category: row.category,
     name: row.name,
     brand: row.brand,
+    vendorId: row.vendor_id ?? undefined,
+    available: row.is_active === 1 && row.is_available === 1,
     price: row.price_kopecks / 100,
     tdp: row.tdp_watt,
     specs: JSON.parse(row.specs_json || "[]"),

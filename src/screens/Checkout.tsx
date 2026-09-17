@@ -17,7 +17,7 @@ import { configStats } from "../lib/compatibility";
 import { saveOrderRemote } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { uid } from "../lib/session";
-import type { Config, Order } from "../types";
+import type { Config, Order, Part } from "../types";
 
 interface CheckoutState {
   orderTitle?: string;
@@ -45,7 +45,7 @@ export default function Checkout() {
   const stats = config ? configStats({ parts }) : { totalPrice: state.total ?? 0, totalTdp: 0 };
   const items = state.line
     ? [state.line]
-    : parts.map(({ part }) => ({
+    : parts.filter((cp): cp is typeof cp & { part: Part } => !!cp.part).map(({ part }) => ({
         kind: "config" as const,
         refId: part.id,
         name: part.name,

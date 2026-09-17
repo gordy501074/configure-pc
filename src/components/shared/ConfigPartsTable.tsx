@@ -6,8 +6,10 @@ import {
   TableHead,
   TableHeader,
   TableRow,
+  Badge,
 } from "../ui";
 import { CATEGORY_LABELS, formatPrice } from "../../lib/format";
+import { isPartAvailable } from "../../lib/compatibility";
 import type { ConfigPart } from "../../types";
 
 export function ConfigPartsTable({ parts }: { parts: ConfigPart[] }) {
@@ -22,13 +24,29 @@ export function ConfigPartsTable({ parts }: { parts: ConfigPart[] }) {
         </TableRow>
       </TableHeader>
       <TableBody>
-        {parts.map(({ category, part }) => (
-          <TableRow key={category}>
-            <TableCell>{CATEGORY_LABELS[category] ?? category}</TableCell>
-            <TableCell>{part.name}</TableCell>
-            <TableCell className="text-right">{formatPrice(part.price)}</TableCell>
-          </TableRow>
-        ))}
+        {parts.map(({ category, part }) => {
+          const unavailable = !part || !isPartAvailable(part);
+          return (
+            <TableRow key={category}>
+              <TableCell>{CATEGORY_LABELS[category] ?? category}</TableCell>
+              {unavailable ? (
+                <>
+                  <TableCell>
+                    <Badge variant="destructive">
+                      Компонент более недоступен для заказа
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="text-right text-muted-foreground">—</TableCell>
+                </>
+              ) : (
+                <>
+                  <TableCell>{part!.name}</TableCell>
+                  <TableCell className="text-right">{formatPrice(part!.price)}</TableCell>
+                </>
+              )}
+            </TableRow>
+          );
+        })}
       </TableBody>
     </Table>
   );

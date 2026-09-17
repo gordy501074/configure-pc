@@ -34,8 +34,9 @@ import {
 import { useAuth } from "../lib/auth";
 import type { Config, Order, Review, SellerBrand } from "../types";
 import Admin from "./Admin";
+import { ProfileComponents } from "./ProfileComponents";
 
-type Tab = "configs" | "orders" | "reviews" | "admin-users" | "brands";
+type Tab = "configs" | "orders" | "reviews" | "admin-users" | "brands" | "components";
 
 interface TabDef {
   key: Tab;
@@ -43,8 +44,18 @@ interface TabDef {
 }
 
 function tabsForRole(role: string): TabDef[] {
-  if (role === "admin") return [{ key: "admin-users", label: "Администрирование пользователей" }];
-  if (role === "seller") return [{ key: "brands", label: "Бренды" }];
+  if (role === "admin") {
+    return [
+      { key: "admin-users", label: "Администрирование пользователей" },
+      { key: "components", label: "Компоненты" },
+    ];
+  }
+  if (role === "seller") {
+    return [
+      { key: "brands", label: "Бренды" },
+      { key: "components", label: "Компоненты" },
+    ];
+  }
   return [
     { key: "configs", label: "Конфигурации" },
     { key: "orders", label: "Заказы" },
@@ -447,6 +458,8 @@ export default function Profile() {
         <section aria-label="Администрирование пользователей">
           <Admin embedded />
         </section>
+      ) : activeTab === "components" ? (
+        <ProfileComponents isAdmin={user?.role === "admin"} />
       ) : activeTab === "brands" ? (
         <section aria-label="Бренды" className="flex flex-col gap-4">
           <div className="flex flex-wrap items-center justify-between gap-2">

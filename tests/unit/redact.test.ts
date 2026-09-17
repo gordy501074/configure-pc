@@ -100,3 +100,9 @@ test("redactUrl falls back to path on non-parseable input", () => {
   const undef = redactUrl(undefined as unknown as string);
   assert.ok(undef.length > 0);
 });
+
+test("redactUrl returns path-only for a malformed URL", () => {
+  const out = redactUrl("http://[::1?token=abc");
+  // Malformed -> catch branch keeps only the leading path segment.
+  assert.ok(!out.includes("token"));
+});

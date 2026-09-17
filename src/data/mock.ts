@@ -1,4 +1,4 @@
-import type { ReadyPc, Review, Part, ComponentCategory } from "../types";
+import type { ReadyPc, Review, Part, ComponentCategory } from "../types/index.ts";
 
 /** Realistic component catalog (prices in RUB). */
 

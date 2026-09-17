@@ -10,11 +10,17 @@ export interface ConfigStats {
   totalTdp: number;
 }
 
-/** Sum price and power draw of a config. */
+/** True when a part is orderable (not deactivated / unavailable). */
+export function isPartAvailable(part: Part): boolean {
+  return part.available !== false;
+}
+
+/** Sum price and power draw of a config (over available parts only). */
 export function configStats(config: Pick<Config, "parts">): ConfigStats {
   let totalPrice = 0;
   let totalTdp = 0;
   for (const { part } of config.parts) {
+    if (!part || !isPartAvailable(part)) continue;
     totalPrice += part.price;
     totalTdp += part.tdp;
   }
@@ -153,7 +159,7 @@ export function validateConfig(
   return issues;
 }
 
-/** True if all mandatory categories are filled and no issues. */
+/** True if all mandatory categories are filled, orderable, and no issues. */
 export function isConfigComplete(
   chosen: Record<ComponentCategory, Part | null>,
 ): boolean {
@@ -168,7 +174,9 @@ export function isConfigComplete(
     "cooler",
   ];
   for (const c of mandatory) {
-    if (!chosen[c]) return false;
+    const part = chosen[c];
+    if (!part) return false;
+    if (!isPartAvailable(part)) return false;
   }
   return validateConfig(chosen).length === 0;
 }

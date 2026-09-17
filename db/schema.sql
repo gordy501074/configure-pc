@@ -1,14 +1,22 @@
--- Confi SQLite schema (STRICT, WAL). Version 5.
+-- Confi SQLite schema (STRICT, WAL). Version 6.
 -- DDL per plan section 2. Applied idempotently by db:init / db:seed.
 
-PRAGMA user_version = 5;
+PRAGMA user_version = 6;
 PRAGMA journal_mode = WAL;
+
+-- Vendors (trademarks) referenced by parts. Populated on the fly from part.brand.
+CREATE TABLE IF NOT EXISTS vendor (
+  vendor_id   TEXT PRIMARY KEY,
+  name        TEXT NOT NULL COLLATE NOCASE UNIQUE,
+  created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+) STRICT;
 
 CREATE TABLE IF NOT EXISTS part (
   part_id       TEXT PRIMARY KEY,
   category      TEXT NOT NULL CHECK (category IN ('cpu','gpu','motherboard','ram','storage','case','psu','cooler')),
   name          TEXT NOT NULL,
   brand         TEXT NOT NULL,
+  vendor_id     TEXT,
   price_kopecks INTEGER NOT NULL CHECK (price_kopecks >= 0),
   tdp_watt      INTEGER NOT NULL DEFAULT 0 CHECK (tdp_watt BETWEEN 0 AND 65355),
   -- Stores the PartCompat document as JSON: { v: 2, ...compat } (see src/types).
@@ -16,7 +24,10 @@ CREATE TABLE IF NOT EXISTS part (
   specs_json    TEXT NOT NULL DEFAULT '[]',
   image_url     TEXT,
   is_active     INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0,1)),
-  created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  -- Available-for-order: is_active=0 (deactivated) OR is_available=0 means "недоступен".
+  is_available  INTEGER NOT NULL DEFAULT 1 CHECK (is_available IN (0,1)),
+  created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  FOREIGN KEY (vendor_id) REFERENCES vendor(vendor_id) ON DELETE SET NULL
 ) STRICT;
 
 CREATE TABLE IF NOT EXISTS ready_pc (
@@ -38,12 +49,12 @@ CREATE TABLE IF NOT EXISTS ready_pc (
 -- junction: ready PC <-> component
 CREATE TABLE IF NOT EXISTS ready_pc_part (
   ready_pc_id TEXT NOT NULL,
-  part_id     TEXT NOT NULL,
+  part_id     TEXT,
   category    TEXT NOT NULL,
   PRIMARY KEY (ready_pc_id, category),
   UNIQUE (ready_pc_id, part_id),
   FOREIGN KEY (ready_pc_id) REFERENCES ready_pc(ready_pc_id) ON DELETE CASCADE,
-  FOREIGN KEY (part_id) REFERENCES part(part_id) ON DELETE RESTRICT
+  FOREIGN KEY (part_id) REFERENCES part(part_id) ON DELETE SET NULL
 ) STRICT, WITHOUT ROWID;
 
 CREATE TABLE IF NOT EXISTS user_account (
@@ -71,10 +82,10 @@ CREATE TABLE IF NOT EXISTS config (
 CREATE TABLE IF NOT EXISTS config_part (
   config_id TEXT NOT NULL,
   category  TEXT NOT NULL CHECK (category IN ('cpu','gpu','motherboard','ram','storage','case','psu','cooler')),
-  part_id   TEXT NOT NULL,
+  part_id   TEXT,
   PRIMARY KEY (config_id, category),
   FOREIGN KEY (config_id) REFERENCES config(config_id) ON DELETE CASCADE,
-  FOREIGN KEY (part_id) REFERENCES part(part_id) ON DELETE RESTRICT
+  FOREIGN KEY (part_id) REFERENCES part(part_id) ON DELETE SET NULL
 ) STRICT, WITHOUT ROWID;
 
 CREATE TABLE IF NOT EXISTS order_header (

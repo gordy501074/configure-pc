@@ -5,14 +5,16 @@
 
 import express from "express";
 import cors from "cors";
-import { createCatalogRepository } from "./repository/catalog.ts";
+import { createCatalogRepository, type CreatePartInput } from "./repository/catalog.ts";
 import { createUserRepository } from "./repository/user-data.ts";
 import { createSellerRepository } from "./repository/seller.ts";
+import { createVendorRepository } from "./repository/vendor.ts";
 import { createAppStateRepository } from "./repository/app-state.ts";
 import { createAnalyticsRepository, type AnalyticsEvent } from "./repository/analytics.ts";
 import { openDb } from "./db.ts";
 import type { SaveConfigInput, SaveOrderInput, SaveReviewInput } from "./repository/user-data.ts";
-import type { UserRole } from "./repository/types.ts";
+import type { ComponentCategory, PartCompat, SpecItem, UserRole } from "./repository/types.ts";
+import { components } from "../data/mock.ts";
 
 const app = express();
 app.use(cors());
@@ -22,6 +24,7 @@ const db = openDb();
 const catalog = createCatalogRepository(db);
 const userData = createUserRepository(db);
 const sellerRepo = createSellerRepository(db);
+const vendorRepo = createVendorRepository(db);
 const appState = createAppStateRepository(db);
 const analytics = createAnalyticsRepository(db);
 
@@ -90,6 +93,23 @@ function requireCustomer(
     return null;
   }
   if (actor.role !== "customer") {
+    res.status(403).json({ error: "forbidden" });
+    return null;
+  }
+  return actor;
+}
+
+/** Require the acting role to be `seller` or `admin` (catalog management). */
+function requireSellerOrAdmin(
+  req: express.Request,
+  res: express.Response,
+): { userId: string; role: UserRole } | null {
+  const actor = actorRole(req);
+  if (!actor) {
+    res.status(403).json({ error: "unauthorized" });
+    return null;
+  }
+  if (actor.role !== "seller" && actor.role !== "admin") {
     res.status(403).json({ error: "forbidden" });
     return null;
   }
@@ -303,6 +323,190 @@ app.delete("/api/seller/:id/brands/:brand", (req, res) => {
   const ok = sellerRepo.deleteBrand(ctx.sellerId, String(req.params.brand));
   if (!ok) return res.status(404).json({ error: "brand not found" });
   res.status(204).end();
+});
+
+// ---- Vendors & components (seller/admin) ----
+
+const CATEGORIES: ComponentCategory[] = [
+  "cpu",
+  "gpu",
+  "motherboard",
+  "ram",
+  "storage",
+  "case",
+  "psu",
+  "cooler",
+];
+
+app.get("/api/vendors", (_req, res) => {
+  res.json(vendorRepo.listVendors());
+});
+
+/**
+ * Validate a create-part body against the category's required compat fields.
+ * Returns an error string or null when valid.
+ */
+function validatePartBody(body: Record<string, unknown>): string | null {
+  const category = body.category as ComponentCategory | undefined;
+  if (!category || !CATEGORIES.includes(category)) return "invalid_category";
+  const brand = String(body.brand ?? "").trim();
+  if (!brand) return "brand_required";
+  const vendor = String(body.vendor ?? "").trim();
+  if (!vendor) return "vendor_required";
+  const price = Number(body.price);
+  if (!Number.isFinite(price) || price < 0) return "invalid_price";
+  const tdp = Number(body.tdp ?? 0);
+  if (!Number.isFinite(tdp) || tdp < 0 || tdp > 65355) return "invalid_tdp";
+
+  const compat = (body.compat ?? {}) as Record<string, unknown>;
+  // Required/relevant per category.
+  if (category === "cpu" && !compat.socket) return "socket_required";
+  if (category === "motherboard" && (!compat.socket || !compat.ramType || !compat.formFactor))
+    return "motherboard_compat_required";
+  if (category === "ram" && !compat.ramType) return "ram_type_required";
+  if (category === "psu" && !compat.power) return "psu_power_required";
+  return null;
+}
+
+/** Compose the full display name from a trademark and a model, e.g. "Intel Core i5-13400F". */
+function composePartName(vendorName: string, brand: string): string {
+  const v = String(vendorName ?? "").trim();
+  const b = String(brand ?? "").trim();
+  if (v && b) return `${v} ${b}`;
+  return v || b;
+}
+
+/** Return the first whitespace token, used to derive a vendor hint from an existing name. */
+function firstToken(s: string): string {
+  return String(s ?? "").trim().split(/\s+/)[0] ?? "";
+}
+
+/** Strip a leading trademark from a full name, returning the model/line name. */
+function modelFromName(name: string, vendorName: string): string {
+  const n = String(name ?? "").trim();
+  const v = String(vendorName ?? "").trim();
+  if (!v) return n;
+  if (n.toLowerCase().startsWith(v.toLowerCase())) {
+    return n.slice(v.length).trim();
+  }
+  return n;
+}
+
+app.post("/api/components", (req, res) => {
+  if (!requireSellerOrAdmin(req, res)) return;
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const err = validatePartBody(body);
+  if (err) return res.status(400).json({ error: err });
+
+  const vendor = vendorRepo.getOrCreateVendor(String(body.vendor));
+  const id = String(body.id ?? `part-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`);
+  const compat = (body.compat ?? {}) as PartCompat;
+  const specs = Array.isArray(body.specs) ? (body.specs as SpecItem[]) : [];
+  const brand = String(body.brand ?? "").trim();
+  const part = catalog.createPart({
+    id,
+    category: body.category as ComponentCategory,
+    name: composePartName(vendor.name, brand),
+    brand,
+    vendorId: vendor.id,
+    priceKopecks: Math.round(Number(body.price) * 100),
+    tdpWatt: Math.round(Number(body.tdp ?? 0)),
+    compat,
+    specs,
+    imageUrl: typeof body.image === "string" ? body.image : null,
+  });
+  res.status(201).json(part);
+});
+
+app.patch("/api/components/:id", (req, res) => {
+  if (!requireSellerOrAdmin(req, res)) return;
+  const body = (req.body ?? {}) as Record<string, unknown>;
+
+  // vendor (optional) -> resolve/create and set vendorId.
+  let vendorId: string | undefined;
+  if (typeof body.vendor === "string" && body.vendor.trim()) {
+    vendorId = vendorRepo.getOrCreateVendor(body.vendor).id;
+  }
+
+  const patch: {
+    name?: string;
+    brand?: string;
+    vendorId?: string;
+    priceKopecks?: number;
+    tdpWatt?: number;
+    compat?: PartCompat;
+    specs?: SpecItem[];
+    imageUrl?: string | null;
+  } = {};
+  const brand = typeof body.brand === "string" ? body.brand.trim() : undefined;
+  if (brand !== undefined) patch.brand = brand;
+  if (vendorId !== undefined) patch.vendorId = vendorId;
+  if (body.price !== undefined) {
+    const price = Number(body.price);
+    if (!Number.isFinite(price) || price < 0) {
+      return res.status(400).json({ error: "invalid_price" });
+    }
+    patch.priceKopecks = Math.round(price * 100);
+  }
+  if (body.tdp !== undefined) {
+    const tdp = Number(body.tdp);
+    if (!Number.isFinite(tdp) || tdp < 0 || tdp > 65355) {
+      return res.status(400).json({ error: "invalid_tdp" });
+    }
+    patch.tdpWatt = Math.round(tdp);
+  }
+  if (body.compat !== undefined) patch.compat = body.compat as PartCompat;
+  if (body.specs !== undefined) patch.specs = body.specs as SpecItem[];
+
+  // Recompute the full display name from vendor + brand when either changes.
+  if (brand !== undefined || vendorId !== undefined) {
+    const existing = catalog.getPartAny(req.params.id);
+    if (!existing) return res.status(404).json({ error: "part not found" });
+    const nextBrand = brand ?? existing.brand;
+    const nextVendorName =
+      vendorId !== undefined
+        ? (vendorRepo.getVendor(vendorId)?.name ?? "")
+        : (vendorRepo.getVendor(existing.vendorId ?? "")?.name ?? firstToken(existing.name));
+    patch.name = composePartName(nextVendorName, nextBrand);
+  }
+
+  const updated = catalog.updatePart(req.params.id, patch);
+  if (!updated) return res.status(404).json({ error: "part not found" });
+  res.json(updated);
+});
+
+app.post("/api/components/:id/deactivate", (req, res) => {
+  if (!requireSellerOrAdmin(req, res)) return;
+  const ok = catalog.deactivatePart(req.params.id);
+  if (!ok) return res.status(404).json({ error: "part not found" });
+  res.json({ ok: true });
+});
+
+app.post("/api/catalog/initialize", (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  const input: CreatePartInput[] = [];
+  for (const cat of CATEGORIES) {
+    for (const p of components[cat]) {
+      // vendor = торговая марка (trademark from mock, e.g. "Cooler Master"),
+      // model = название минус префикс-торговая марка.
+      const vendor = vendorRepo.getOrCreateVendor(p.brand);
+      const brand = modelFromName(p.name, p.brand);
+      input.push({
+        id: p.id,
+        category: p.category,
+        name: composePartName(vendor.name, brand),
+        brand,
+        vendorId: vendor.id,
+        priceKopecks: Math.round(p.price * 100),
+        tdpWatt: Math.round(p.tdp),
+        compat: p.compat,
+        specs: p.specs,
+        imageUrl: p.image ?? null,
+      });
+    }
+  }
+  const result = catalog.initializeCatalog(input);
+  res.json({ ok: true, ...result });
 });
 
 // ---- Configs ----
