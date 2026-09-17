@@ -66,3 +66,17 @@ jobs:
       - run: npm run typecheck
       - run: npm run test:typecheck
       - run: npm run build
+
+  # Pure-logic coverage gate: unit tests assert src/lib/format, compatibility and
+  # analytics/redact at >=99% line coverage. Failure blocks merge (required check).
+  unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run test:unit:cov

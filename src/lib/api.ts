@@ -10,6 +10,7 @@ import type {
   Part,
   ReadyPc,
   Review,
+  SellerBrand,
   User,
 } from "../types";
 
@@ -375,7 +376,37 @@ export async function setUserRole(id: string, role: User["role"]): Promise<User>
 
 // ---- Seller ----
 
-export async function fetchSellerBrands(sellerId: string): Promise<string[]> {
-  const rows = await req<{ brand: string }[]>(`/seller/${encodeURIComponent(sellerId)}/brands`);
-  return rows.map((r) => r.brand);
+export async function fetchSellerBrands(sellerId: string): Promise<SellerBrand[]> {
+  return req<SellerBrand[]>(`/seller/${encodeURIComponent(sellerId)}/brands`);
+}
+
+export async function addSellerBrand(
+  sellerId: string,
+  brand: string,
+  description?: string,
+): Promise<SellerBrand> {
+  return req<SellerBrand>(`/seller/${encodeURIComponent(sellerId)}/brands`, {
+    method: "PUT",
+    body: JSON.stringify({ brand, ...(description !== undefined ? { description } : {}) }),
+  });
+}
+
+export async function updateSellerBrand(
+  sellerId: string,
+  brand: string,
+  patch: { brand?: string; description?: string },
+): Promise<SellerBrand> {
+  return req<SellerBrand>(`/seller/${encodeURIComponent(sellerId)}/brands/${encodeURIComponent(brand)}`, {
+    method: "PATCH",
+    body: JSON.stringify(patch),
+  });
+}
+
+export async function deleteSellerBrand(
+  sellerId: string,
+  brand: string,
+): Promise<void> {
+  await req<void>(`/seller/${encodeURIComponent(sellerId)}/brands/${encodeURIComponent(brand)}`, {
+    method: "DELETE",
+  });
 }

@@ -8,7 +8,7 @@ import { readFileSync, appendFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { components, readyPcs, seededReviews } from "../src/data/mock.ts";
-import { migrateUserAccount } from "./migrate.ts";
+import { migrateSellerBrandDescription, migrateUserAccount } from "./migrate.ts";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const DB_PATH = join(root, "db", "confi.db");
@@ -70,6 +70,7 @@ db.pragma("foreign_keys = ON");
 db.pragma("journal_mode = WAL");
 db.exec(readFileSync(SCHEMA, "utf8"));
 migrateUserAccount(db);
+migrateSellerBrandDescription(db);
 
 /** Validate a single part row; returns null to skip. */
 function validatePart(p) {
@@ -126,29 +127,22 @@ const upsertAccount = db.prepare(`
   INSERT INTO user_account (user_id, name, email, phone, role, company)
   VALUES (@user_id, @name, @email, @phone, @role, @company)
   ON CONFLICT(user_id) DO UPDATE SET
-    email=excluded.email, phone=excluded.phone,
-    role=excluded.role, company=excluded.company
+    email=excluded.email, phone=excluded.phone, role=excluded.role
 `);
 
 const insertSellerBrand = db.prepare(`
-  INSERT INTO seller_brand (seller_id, brand)
-  VALUES (@seller_id, @brand)
-  ON CONFLICT(seller_id, brand) DO NOTHING
+  INSERT INTO seller_brand (seller_id, brand, description)
+  VALUES (@seller_id, @brand, @description)
+  ON CONFLICT(seller_id, brand) DO UPDATE SET description=excluded.description
 `);
 
 const seedAll = db.transaction(() => {
-  // Clear in FK-safe order: child tables first, then catalog parents.
-  db.prepare("DELETE FROM app_setting").run();
-  db.prepare("DELETE FROM order_item").run();
-  db.prepare("DELETE FROM order_header").run();
-  db.prepare("DELETE FROM config_part").run();
-  db.prepare("DELETE FROM config").run();
-  db.prepare("DELETE FROM review").run();
-  db.prepare("DELETE FROM seller_brand").run();
-  db.prepare("DELETE FROM user_account").run();
-  db.prepare("DELETE FROM ready_pc_part").run();
-  db.prepare("DELETE FROM ready_pc").run();
-  db.prepare("DELETE FROM part").run();
+  // Re-seed catalog idempotently. User-generated data (config, config_part,
+  // order_header, order_item, review, app_setting) and user_account /
+  // seller_brand are NOT deleted so saved configs, orders, reviews and profile
+  // edits survive application restarts (e.g. on npm start). Catalog rows are
+  // upserted below; nothing in the catalog is deleted, so FK references from
+  // user rows (ON DELETE RESTRICT / CASCADE) are never triggered.
 
   let partCount = 0;
   for (const cat of CATEGORIES) {
@@ -212,7 +206,11 @@ const seedAll = db.transaction(() => {
     role: "seller",
     company: "Confi Маркет",
   });
-  insertSellerBrand.run({ seller_id: "usr-seller", brand: "Confi" });
+  insertSellerBrand.run({
+    seller_id: "usr-seller",
+    brand: "Confi",
+    description: "Собственные сборки Confi",
+  });
 
   return partCount;
 });

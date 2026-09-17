@@ -118,8 +118,24 @@ export default function ReadyPCs() {
       <Card className="mb-5 p-4">
         <form
           onSubmit={onSubmit}
-          className="grid grid-cols-1 items-end gap-3 md:grid-cols-3"
+          className="flex flex-wrap items-end gap-3"
         >
+          <FilterField label="Сортировка" htmlFor="filter-sort">
+            <Select
+              value={filters.sort}
+              onValueChange={(v) => applyFilters({ sort: v as SortKey })}
+            >
+              <SelectTrigger id="filter-sort" size="sm">
+                <SelectValue placeholder="Сортировка" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="price-asc">Сначала дешевле</SelectItem>
+                <SelectItem value="price-desc">Сначала дороже</SelectItem>
+                <SelectItem value="rating">По рейтингу</SelectItem>
+              </SelectContent>
+            </Select>
+          </FilterField>
+
           <FilterField label="Назначение" htmlFor="filter-usage">
             <Select
               value={filters.usage}
@@ -179,24 +195,8 @@ export default function ReadyPCs() {
             </div>
           </fieldset>
 
-          <FilterField label="Сортировка" htmlFor="filter-sort">
-            <Select
-              value={filters.sort}
-              onValueChange={(v) => applyFilters({ sort: v as SortKey })}
-            >
-              <SelectTrigger id="filter-sort" size="sm">
-                <SelectValue placeholder="Сортировка" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="price-asc">Сначала дешевле</SelectItem>
-                <SelectItem value="price-desc">Сначала дороже</SelectItem>
-                <SelectItem value="rating">По рейтингу</SelectItem>
-              </SelectContent>
-            </Select>
-          </FilterField>
-
           {hasCustomFilter ? (
-            <Button variant="ghost" onClick={reset} className="justify-self-start self-end">
+            <Button variant="ghost" onClick={reset} className="self-end">
               Сбросить
             </Button>
           ) : null}

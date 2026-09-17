@@ -61,9 +61,6 @@ export function checkPartCompatibility(
       `Плата поддерживает ${motherboard.ramType}, а память — ${ram.ramType}.`,
     );
   }
-  if (cpu && !motherboard && candidate.category === "motherboard" && ram) {
-    // handled in final validation
-  }
 
   // --- Case <-> motherboard form factor (case supports up to its own) ---
   if (pcCase && motherboard && pcCase.formFactor) {

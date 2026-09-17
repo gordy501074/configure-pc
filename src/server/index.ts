@@ -79,6 +79,23 @@ function requireAdmin(
   return actor;
 }
 
+/** Require the acting session to belong to a `customer` (no purchases/saves for admin/seller). */
+function requireCustomer(
+  req: express.Request,
+  res: express.Response,
+): { userId: string; role: UserRole } | null {
+  const actor = actorRole(req);
+  if (!actor) {
+    res.status(403).json({ error: "unauthorized" });
+    return null;
+  }
+  if (actor.role !== "customer") {
+    res.status(403).json({ error: "forbidden" });
+    return null;
+  }
+  return actor;
+}
+
 // ---- Catalog ----
 app.get("/api/parts", (req, res) => {
   const category =
@@ -226,13 +243,66 @@ app.patch("/api/users/:id/role", (req, res) => {
 });
 
 // ---- Seller: brands (owner or admin) ----
-app.get("/api/seller/:id/brands", (req, res) => {
+function sellerBrandActor(
+  req: express.Request,
+  res: express.Response,
+): { actor: { userId: string; role: UserRole }; sellerId: string } | null {
   const actor = actorRole(req);
-  if (!actor) return res.status(403).json({ error: "unauthorized" });
-  if (actor.role !== "admin" && actor.userId !== req.params.id) {
-    return res.status(403).json({ error: "forbidden" });
+  if (!actor) {
+    res.status(403).json({ error: "unauthorized" });
+    return null;
   }
-  res.json(sellerRepo.listSellerBrands(req.params.id).map((brand) => ({ brand })));
+  if (actor.role !== "admin" && actor.userId !== req.params.id) {
+    res.status(403).json({ error: "forbidden" });
+    return null;
+  }
+  return { actor, sellerId: String(req.params.id) };
+}
+
+app.get("/api/seller/:id/brands", (req, res) => {
+  const ctx = sellerBrandActor(req, res);
+  if (!ctx) return;
+  res.json(sellerRepo.listSellerBrands(ctx.sellerId));
+});
+
+app.put("/api/seller/:id/brands", (req, res) => {
+  const ctx = sellerBrandActor(req, res);
+  if (!ctx) return;
+  const body = req.body as { brand?: string; description?: string };
+  const brand = String(body.brand ?? "").trim();
+  if (!brand) return res.status(400).json({ error: "brand required" });
+  const existing = sellerRepo.listSellerBrands(ctx.sellerId).find((b) => b.brand === brand);
+  if (existing) return res.status(409).json({ error: "brand_exists" });
+  const created = sellerRepo.addBrand(
+    ctx.sellerId,
+    brand,
+    typeof body.description === "string" ? body.description : undefined,
+  );
+  res.status(201).json(created);
+});
+
+app.patch("/api/seller/:id/brands/:brand", (req, res) => {
+  const ctx = sellerBrandActor(req, res);
+  if (!ctx) return;
+  const body = req.body as { brand?: string; description?: string };
+  const patch: { brand?: string; description?: string } = {};
+  const nextBrand = typeof body.brand === "string" ? body.brand.trim() : undefined;
+  if (nextBrand !== undefined && !nextBrand) {
+    return res.status(400).json({ error: "brand required" });
+  }
+  if (nextBrand !== undefined) patch.brand = nextBrand;
+  if (typeof body.description === "string") patch.description = body.description;
+  const updated = sellerRepo.updateBrand(ctx.sellerId, String(req.params.brand), patch);
+  if (!updated) return res.status(404).json({ error: "brand not found" });
+  res.json(updated);
+});
+
+app.delete("/api/seller/:id/brands/:brand", (req, res) => {
+  const ctx = sellerBrandActor(req, res);
+  if (!ctx) return;
+  const ok = sellerRepo.deleteBrand(ctx.sellerId, String(req.params.brand));
+  if (!ok) return res.status(404).json({ error: "brand not found" });
+  res.status(204).end();
 });
 
 // ---- Configs ----
@@ -247,16 +317,19 @@ app.get("/api/configs/:id", (req, res) => {
 });
 
 app.put("/api/configs/:id", (req, res) => {
+  const actor = requireCustomer(req, res);
+  if (!actor) return;
   const input = req.body as Omit<SaveConfigInput, "user_id" | "id">;
   const cfg = userData.saveConfig({
     id: req.params.id,
-    user_id: actorId(req),
+    user_id: actor.userId,
     ...input,
   });
   res.json(cfg);
 });
 
 app.delete("/api/configs/:id", (req, res) => {
+  if (!requireCustomer(req, res)) return;
   const ok = userData.deleteConfig(req.params.id);
   if (!ok) return res.status(404).json({ error: "config not found" });
   res.status(204).end();
@@ -268,16 +341,19 @@ app.get("/api/orders", (req, res) => {
 });
 
 app.put("/api/orders/:id", (req, res) => {
+  const actor = requireCustomer(req, res);
+  if (!actor) return;
   const input = req.body as Omit<SaveOrderInput, "user_id" | "id">;
   const order = userData.saveOrder({
     id: req.params.id,
-    user_id: actorId(req),
+    user_id: actor.userId,
     ...input,
   });
   res.json(order);
 });
 
 app.delete("/api/orders/:id", (req, res) => {
+  if (!requireCustomer(req, res)) return;
   const ok = userData.deleteOrder(req.params.id);
   if (!ok) return res.status(404).json({ error: "order not found" });
   res.status(204).end();
@@ -292,6 +368,7 @@ app.get("/api/reviews", (req, res) => {
 });
 
 app.put("/api/reviews/:id", (req, res) => {
+  if (!requireCustomer(req, res)) return;
   const input = req.body as Omit<SaveReviewInput, "id">;
   const review = userData.saveReview({ id: req.params.id, ...input });
   res.json(review);

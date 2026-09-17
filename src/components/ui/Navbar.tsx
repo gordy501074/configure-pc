@@ -1,12 +1,22 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, NavLink, useNavigate } from "react-router-dom";
-import { Moon, Sun } from "lucide-react";
+import { Moon, Sun, Settings } from "lucide-react";
 
 import { Button } from "./Button";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/lib/auth";
 import { useTheme } from "@/lib/theme";
 import { useToast } from "./Toast";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+  Switch,
+} from "./index";
+import { fetchSettings, saveSettingsRemote } from "@/lib/api";
+import type { AppSettings } from "@/types";
 
 const NAV = [
   { to: "/", label: "Главная" },
@@ -18,14 +28,69 @@ const NAV = [
 export function Navbar() {
   const { user, isAdmin, isSeller, signOut } = useAuth();
   const { toast } = useToast();
-  const { theme, toggleTheme } = useTheme();
+  const { theme, toggleTheme, setTheme } = useTheme();
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [notifications, setNotifications] = useState(true);
+  const settingsRef = useRef<HTMLDivElement>(null);
+
+  const userId = user?.id;
+  useEffect(() => {
+    if (!userId) return;
+    let cancelled = false;
+    fetchSettings(user.id).then((s) => {
+      if (!cancelled) setNotifications(s.notifications);
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId]);
+
+  useEffect(() => {
+    if (!settingsOpen) return;
+    const onDown = (e: MouseEvent) => {
+      const target = e.target as Node | null;
+      if (target instanceof Element && target.closest('[data-slot="select-content"]')) {
+        return;
+      }
+      if (settingsRef.current && !settingsRef.current.contains(target)) {
+        setSettingsOpen(false);
+      }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setSettingsOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [settingsOpen]);
 
   const handleSignOut = () => {
     signOut();
     toast("Вы вышли из аккаунта", "info");
     navigate("/");
+  };
+
+  const handleThemeChange = (t: AppSettings["theme"]) => {
+    setTheme(t);
+  };
+
+  const handleNotificationsChange = async (v: boolean) => {
+    setNotifications(v);
+    if (user) {
+      try {
+        await saveSettingsRemote(user.id, { notifications: v });
+        toast("Настройки сохранены");
+      } catch {
+        setNotifications(!v);
+        toast("Не удалось сохранить настройки", "error");
+      }
+    }
   };
 
   const isDark = theme === "dark";
@@ -92,6 +157,52 @@ export function Navbar() {
 
           {user ? (
             <>
+              <div className="relative" ref={settingsRef}>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => setSettingsOpen((s) => !s)}
+                  aria-label="Настройки"
+                  aria-expanded={settingsOpen}
+                  title="Настройки"
+                >
+                  <Settings />
+                </Button>
+                {settingsOpen ? (
+                  <div
+                    role="dialog"
+                    aria-label="Настройки"
+                    className="absolute right-0 top-full z-50 mt-2 w-64 rounded-lg border bg-popover p-3 text-popover-foreground shadow-md"
+                  >
+                    <div className="flex items-center justify-between gap-4 py-1.5">
+                      <div>
+                        <span className="block text-sm font-medium">Тема оформления</span>
+                        <span className="text-xs text-muted-foreground">Светлая или тёмная.</span>
+                      </div>
+                      <Select value={theme} onValueChange={(v) => handleThemeChange(v as AppSettings["theme"])}>
+                        <SelectTrigger size="sm" aria-label="Тема оформления" className="w-fit">
+                          <SelectValue placeholder="Тема" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="light">Светлая</SelectItem>
+                          <SelectItem value="dark">Тёмная</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="flex items-center justify-between gap-4 border-t py-1.5 pt-3">
+                      <div>
+                        <span className="block text-sm font-medium">Уведомления</span>
+                        <span className="text-xs text-muted-foreground">Показ уведомлений (демо).</span>
+                      </div>
+                      <Switch
+                        checked={notifications}
+                        onCheckedChange={(v) => void handleNotificationsChange(v)}
+                        aria-label="Уведомления"
+                      />
+                    </div>
+                  </div>
+                ) : null}
+              </div>
               <Link
                 to="/profile"
                 onClick={() => setOpen(false)}

@@ -19,3 +19,12 @@ export function RequireRole({ role, children }: { role: UserRole; children: Reac
   if (!user || user.role !== role) return <Navigate to="/" replace />;
   return <>{children}</>;
 }
+
+/** Gate for customers only (buying/saving/reviews are forbidden for admin/seller). */
+export function RequireCustomer({ children }: { children: ReactNode }) {
+  const { user, signingIn } = useAuth();
+  if (signingIn) return null;
+  if (!user) return <Navigate to="/auth" replace />;
+  if (user.role !== "customer") return <Navigate to="/" replace />;
+  return <>{children}</>;
+}

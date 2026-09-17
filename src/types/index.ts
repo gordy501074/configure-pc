@@ -133,6 +133,12 @@ export interface SurveyAnswers {
   priority: Priority;
 }
 
+/** A brand owned by a seller. */
+export interface SellerBrand {
+  brand: string;
+  description?: string;
+}
+
 /** Compatibility disallow reason. */
 export interface PartIssue {
   category: ComponentCategory;

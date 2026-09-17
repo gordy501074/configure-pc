@@ -32,7 +32,7 @@ export default function PcCard() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { toast } = useToast();
-  const { user } = useAuth();
+  const { user, isCustomer } = useAuth();
   const [loadState, setLoadState] = useState<"loading" | "done">("loading");
   const [pc, setPc] = useState<ReadyPc | null>(null);
   const [reviews, setReviews] = useState<Review[]>([]);
@@ -200,7 +200,7 @@ export default function PcCard() {
           </Card>
         </section>
 
-        <aside className="flex flex-col" aria-label="Покупка">
+        <aside className="flex flex-col" aria-label="Действия">
           <Card className="sticky top-20 flex-col gap-3 p-4">
             <span className="text-3xl font-bold text-foreground">
               {formatPrice(stats.totalPrice)}
@@ -208,35 +208,43 @@ export default function PcCard() {
             <span className="mb-2 text-sm text-muted-foreground">
               Потребление: {stats.totalTdp} Вт
             </span>
-            <InstallmentPlan
-              total={stats.totalPrice}
-              state={{
-                orderTitle: pc.name,
-                line: {
-                  kind: "ready",
-                  refId: pc.id,
-                  name: pc.name,
-                  price: stats.totalPrice,
-                  count: 1,
-                },
-              }}
-            />
-            <Button size="lg" onClick={checkout}>
-              Оформить заказ
-            </Button>
+            {isCustomer ? (
+              <>
+                <InstallmentPlan
+                  total={stats.totalPrice}
+                  state={{
+                    orderTitle: pc.name,
+                    line: {
+                      kind: "ready",
+                      refId: pc.id,
+                      name: pc.name,
+                      price: stats.totalPrice,
+                      count: 1,
+                    },
+                  }}
+                />
+                <Button size="lg" onClick={checkout}>
+                  Оформить заказ
+                </Button>
+              </>
+            ) : null}
             <Button variant="secondary" onClick={configureFromTemplate}>
               Настроить в конфигураторе
             </Button>
             <div className="flex flex-wrap justify-between gap-2 border-t pt-3">
-              <Button variant="ghost" onClick={handleSave}>
-                Сохранить
-              </Button>
+              {isCustomer ? (
+                <Button variant="ghost" onClick={handleSave}>
+                  Сохранить
+                </Button>
+              ) : null}
               <Button variant="ghost" onClick={handleShare}>
                 Поделиться
               </Button>
-              <Button variant="ghost" onClick={() => setReviewOpen(true)}>
-                Отзыв
-              </Button>
+              {isCustomer ? (
+                <Button variant="ghost" onClick={() => setReviewOpen(true)}>
+                  Отзыв
+                </Button>
+              ) : null}
             </div>
           </Card>
         </aside>
@@ -267,18 +275,22 @@ export default function PcCard() {
             ))}
           </div>
         )}
-        <Button variant="secondary" onClick={() => setReviewOpen(true)}>
-          Оставить отзыв
-        </Button>
+        {isCustomer ? (
+          <Button variant="secondary" onClick={() => setReviewOpen(true)}>
+            Оставить отзыв
+          </Button>
+        ) : null}
       </section>
 
-      <ReviewDialog
-        open={reviewOpen}
-        onClose={() => setReviewOpen(false)}
-        entityId={pc.id}
-        author={user?.name ?? "Гость"}
-        onSubmitted={() => void listReviews(pc.id).then(setReviews)}
-      />
+      {isCustomer ? (
+        <ReviewDialog
+          open={reviewOpen}
+          onClose={() => setReviewOpen(false)}
+          entityId={pc.id}
+          author={user?.name ?? "Гость"}
+          onSubmitted={() => void listReviews(pc.id).then(setReviews)}
+        />
+      ) : null}
     </div>
   );
 }

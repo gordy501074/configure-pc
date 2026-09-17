@@ -43,7 +43,7 @@ interface CreateForm {
 
 const emptyForm: CreateForm = { name: "", email: "", phone: "", role: "customer", company: "" };
 
-export default function Admin() {
+export default function Admin({ embedded = false }: { embedded?: boolean }) {
   const { user, isAdmin, refreshUser } = useAuth();
   const { toast } = useToast();
   const navigate = useNavigate();
@@ -144,8 +144,10 @@ export default function Admin() {
   };
 
   return (
-    <div className="container">
-      <Breadcrumbs items={[{ label: "Главная", to: "/" }, { label: "Администрирование" }]} />
+    <div className={embedded ? "" : "container"}>
+      {!embedded ? (
+        <Breadcrumbs items={[{ label: "Главная", to: "/" }, { label: "Администрирование" }]} />
+      ) : null}
 
       <section className="mb-6 flex flex-wrap items-center justify-between gap-4">
         <div>

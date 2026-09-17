@@ -1,7 +1,7 @@
--- Confi SQLite schema (STRICT, WAL). Version 3.
+-- Confi SQLite schema (STRICT, WAL). Version 4.
 -- DDL per plan section 2. Applied idempotently by db:init / db:seed.
 
-PRAGMA user_version = 3;
+PRAGMA user_version = 4;
 PRAGMA journal_mode = WAL;
 
 CREATE TABLE IF NOT EXISTS part (
@@ -139,8 +139,9 @@ CREATE TABLE IF NOT EXISTS auth_pending (
 
 -- Seller <-> brand ownership (1-to-many: a seller owns many brands).
 CREATE TABLE IF NOT EXISTS seller_brand (
-  seller_id TEXT NOT NULL,
-  brand     TEXT NOT NULL,
+  seller_id   TEXT NOT NULL,
+  brand       TEXT NOT NULL,
+  description TEXT,
   PRIMARY KEY (seller_id, brand),
   FOREIGN KEY (seller_id) REFERENCES user_account(user_id) ON DELETE CASCADE
 ) STRICT, WITHOUT ROWID;

@@ -26,7 +26,7 @@ export default function AutoResult() {
   const location = useLocation();
   const navigate = useNavigate();
   const { toast } = useToast();
-  const { user } = useAuth();
+  const { user, isCustomer } = useAuth();
   const [loadState, setLoadState] = useState<"loading" | "done">("loading");
   const [reviewOpen, setReviewOpen] = useState(false);
   const [catalog, setCatalog] = useState<Record<ComponentCategory, Part[]> | null>(null);
@@ -147,26 +147,34 @@ export default function AutoResult() {
         </div>
 
         <div className="flex flex-wrap gap-2">
-          <Button size="lg" onClick={checkout}>
-            Оформить заказ · {formatPrice(stats.totalPrice)}
-          </Button>
+          {isCustomer ? (
+            <Button size="lg" onClick={checkout}>
+              Оформить заказ · {formatPrice(stats.totalPrice)}
+            </Button>
+          ) : null}
           <Button variant="secondary" size="lg" onClick={editInConfig}>
             Редактировать в конфигураторе
           </Button>
-          <Button variant="ghost" onClick={handleSave}>
-            Сохранить
-          </Button>
+          {isCustomer ? (
+            <Button variant="ghost" onClick={handleSave}>
+              Сохранить
+            </Button>
+          ) : null}
           <Button variant="ghost" onClick={handleShare}>
             Поделиться
           </Button>
-          <Button variant="ghost" onClick={() => setReviewOpen(true)}>
-            Отзыв
-          </Button>
+          {isCustomer ? (
+            <Button variant="ghost" onClick={() => setReviewOpen(true)}>
+              Отзыв
+            </Button>
+          ) : null}
         </div>
 
-        <div className="max-w-sm">
-          <InstallmentPlan total={stats.totalPrice} state={{ config: cfg }} />
-        </div>
+        {isCustomer ? (
+          <div className="max-w-sm">
+            <InstallmentPlan total={stats.totalPrice} state={{ config: cfg }} />
+          </div>
+        ) : null}
 
         <Card className="gap-4 p-4">
           <h2 className="text-lg font-semibold">Состав сборки</h2>
@@ -197,12 +205,14 @@ export default function AutoResult() {
         </Card>
       </div>
 
-      <ReviewDialog
-        open={reviewOpen}
-        onClose={() => setReviewOpen(false)}
-        entityId={`auto-${cfg.id}`}
-        author={user?.name ?? "Гость"}
-      />
+      {isCustomer ? (
+        <ReviewDialog
+          open={reviewOpen}
+          onClose={() => setReviewOpen(false)}
+          entityId={`auto-${cfg.id}`}
+          author={user?.name ?? "Гость"}
+        />
+      ) : null}
     </div>
   );
 }
