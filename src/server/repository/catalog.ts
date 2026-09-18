@@ -11,7 +11,7 @@ import type {
   ReadyPcRow,
   SpecItem,
 } from "./types.ts";
-import { partToDto, readyPcToBaseDto } from "./types.ts";
+import { attachPrice, partToDto, readyPcToBaseDto } from "./types.ts";
 
 export interface CreatePartInput {
   id: string;
@@ -19,7 +19,6 @@ export interface CreatePartInput {
   name: string;
   brand: string;
   vendorId?: string | null;
-  priceKopecks: number;
   tdpWatt: number;
   compat: PartCompat;
   specs?: SpecItem[];
@@ -30,7 +29,6 @@ export interface UpdatePartInput {
   name?: string;
   brand?: string;
   vendorId?: string | null;
-  priceKopecks?: number;
   tdpWatt?: number;
   compat?: PartCompat;
   specs?: SpecItem[];
@@ -42,12 +40,14 @@ export interface CatalogRepository {
    * List parts. When `includeInactive` is true, deactivated (/unavailable)
    * parts are returned too (catalog management use).
    */
-  listParts(category?: ComponentCategory, includeInactive?: boolean): PartDto[];
-  getPart(id: string): PartDto | null;
+  listParts(category?: ComponentCategory, includeInactive?: boolean, sellerId?: string): PartDto[];
+  getPart(id: string, sellerId?: string): PartDto | null;
   /** Fetch a part regardless of is_active/is_available (admin internal use). */
   getPartAny(id: string): PartDto | null;
-  listReadyPcs(): ReadyPcDto[];
-  getReadyPc(id: string): ReadyPcDto | null;
+  listReadyPcs(sellerId?: string): ReadyPcDto[];
+  getReadyPc(id: string, sellerId?: string): ReadyPcDto | null;
+  /** Resolve prices from the given active price list into a part list. */
+  attachPrices(parts: PartDto[], sellerId?: string): PartDto[];
   // Catalog management (seller/admin).
   createPart(input: CreatePartInput): PartDto;
   updatePart(id: string, patch: UpdatePartInput): PartDto | null;
@@ -108,8 +108,31 @@ export function createCatalogRepository(db: Database): CatalogRepository {
   const reviewCountStmt = db.prepare(
     `SELECT count(*) AS c FROM review WHERE ready_pc_id = ?`,
   );
+  const activePriceListIdStmt = db.prepare(
+    `SELECT price_list_id FROM price_list WHERE seller_id = ? AND is_active = 1 ORDER BY created_at DESC LIMIT 1`,
+  );
+  const priceForStmt = db.prepare(
+    `SELECT price_kopecks FROM price_list_item WHERE price_list_id = ? AND part_id = ?`,
+  );
 
-  function readyPcWithParts(row: ReadyPcRow): ReadyPcDto | null {
+  function activePriceListId(sellerId?: string): string | null {
+    if (!sellerId) return null;
+    const row = activePriceListIdStmt.get(sellerId) as { price_list_id: string } | undefined;
+    return row?.price_list_id ?? null;
+  }
+
+  function priceFor(priceListId: string | null, partId: string): number | null {
+    if (!priceListId) return null;
+    const row = priceForStmt.get(priceListId, partId) as { price_kopecks: number } | undefined;
+    return row ? row.price_kopecks : null;
+  }
+
+  function attachPrices(parts: PartDto[], sellerId?: string): PartDto[] {
+    const plId = activePriceListId(sellerId);
+    return parts.map((p) => attachPrice(p, priceFor(plId, p.id)));
+  }
+
+  function readyPcWithParts(row: ReadyPcRow, sellerId?: string): ReadyPcDto | null {
     if (!row) return null;
     const links = readyPartIdsStmt.all(row.ready_pc_id) as {
       part_id: string | null;
@@ -118,51 +141,69 @@ export function createCatalogRepository(db: Database): CatalogRepository {
     const resolved = partsByIds(
       db,
       links.map((l) => l.part_id),
-    );
+    ).map((p) => attachPrices([p], sellerId)[0]);
     const byId = new Map(resolved.map((p) => [p.id, p]));
     const parts: ConfigPartDto[] = links.map((l) => {
       if (!l.part_id) return { category: l.category, part: null, unavailableReason: "missing" };
       const part = byId.get(l.part_id);
       if (!part || !part.available) {
-        return { category: l.category, part: null, unavailableReason: "deactivated" };
+        const priced = part && (part.priceSet === true);
+        return {
+          category: l.category,
+          part: priced ? part : null,
+          unavailableReason: !part ? "missing" : part.price !== undefined && part.price <= 0 ? "no_price" : "deactivated",
+        };
       }
       return { category: l.category, part };
     });
+    // Ready PC price = sum of priced parts in its composition.
+    const totalPrice = parts
+      .filter((p) => p.part?.price !== undefined)
+      .reduce((s, p) => s + (p.part!.price ?? 0), 0);
     const reviewCount = (reviewCountStmt.get(row.ready_pc_id) as { c: number }).c;
-    return { ...readyPcToBaseDto(row), reviewCount, parts };
+    return { ...readyPcToBaseDto(row), price: totalPrice, reviewCount, parts };
   }
 
   return {
-    listParts(category, includeInactive) {
+    listParts(category, includeInactive, sellerId) {
       const all = includeInactive === true;
       const rows = category
         ? (all ? listAllPartsByCatStmt : listPartsByCatStmt).all(category)
         : (all ? listAllPartsStmt : listPartsStmt).all();
-      return (rows as PartRow[]).map(partToDto);
+      const parts = (rows as PartRow[]).map(partToDto);
+      return includeInactive ? parts : attachPrices(parts, sellerId);
     },
-    getPart(id) {
+    getPart(id, sellerId) {
       const row = getPartStmt.get(id) as PartRow | undefined;
-      return row ? partToDto(row) : null;
+      return row ? attachPrices([partToDto(row)], sellerId)[0] : null;
     },
     getPartAny(id) {
       const row = getPartAnyStmt.get(id) as PartRow | undefined;
       return row ? partToDto(row) : null;
     },
-    listReadyPcs() {
-      const rows = listReadyStmt.all() as ReadyPcRow[];
-      return rows.map((r) => readyPcWithParts(r)!).filter(Boolean);
+    attachPrices(parts, sellerId) {
+      return attachPrices(parts, sellerId);
     },
-    getReadyPc(id) {
+    listReadyPcs(sellerId) {
+      const rows = listReadyStmt.all() as ReadyPcRow[];
+      return rows
+        .filter((r) => !sellerId || r.seller_id === sellerId)
+        .map((r) => readyPcWithParts(r, sellerId)!)
+        .filter(Boolean);
+    },
+    getReadyPc(id, sellerId) {
       const row = getReadyStmt.get(id) as ReadyPcRow | undefined;
-      return row ? readyPcWithParts(row) : null;
+      return row && (sellerId === undefined || row.seller_id === sellerId)
+        ? readyPcWithParts(row, sellerId)
+        : null;
     },
     createPart(input) {
       db.prepare(
-        `INSERT INTO part (part_id, category, name, brand, vendor_id, price_kopecks, tdp_watt, compat_json, specs_json, image_url, is_active, is_available)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1)
+        `INSERT INTO part (part_id, category, name, brand, vendor_id, tdp_watt, compat_json, specs_json, image_url, is_active, is_available)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1)
          ON CONFLICT(part_id) DO UPDATE SET
            category=excluded.category, name=excluded.name, brand=excluded.brand,
-           vendor_id=excluded.vendor_id, price_kopecks=excluded.price_kopecks,
+           vendor_id=excluded.vendor_id,
            tdp_watt=excluded.tdp_watt, compat_json=excluded.compat_json,
            specs_json=excluded.specs_json, image_url=excluded.image_url,
            is_active=1, is_available=1`,
@@ -172,7 +213,6 @@ export function createCatalogRepository(db: Database): CatalogRepository {
         input.name,
         input.brand,
         input.vendorId ?? null,
-        input.priceKopecks,
         input.tdpWatt,
         compatJson(input.compat),
         specsJson(input.specs),
@@ -188,7 +228,6 @@ export function createCatalogRepository(db: Database): CatalogRepository {
         brand: patch.brand ?? existing.brand,
         vendor_id:
           patch.vendorId !== undefined ? patch.vendorId : existing.vendor_id,
-        price_kopecks: patch.priceKopecks ?? existing.price_kopecks,
         tdp_watt: patch.tdpWatt ?? existing.tdp_watt,
         compat_json: patch.compat ? compatJson(patch.compat) : existing.compat_json,
         specs_json: patch.specs ? specsJson(patch.specs) : existing.specs_json,
@@ -196,14 +235,13 @@ export function createCatalogRepository(db: Database): CatalogRepository {
           patch.imageUrl !== undefined ? patch.imageUrl : existing.image_url,
       };
       db.prepare(
-        `UPDATE part SET name=?, brand=?, vendor_id=?, price_kopecks=?, tdp_watt=?,
+        `UPDATE part SET name=?, brand=?, vendor_id=?, tdp_watt=?,
            compat_json=?, specs_json=?, image_url=?
          WHERE part_id=?`,
       ).run(
         next.name,
         next.brand,
         next.vendor_id,
-        next.price_kopecks,
         next.tdp_watt,
         next.compat_json,
         next.specs_json,

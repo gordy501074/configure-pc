@@ -9,9 +9,12 @@ import type {
   Order,
   Part,
   PartCompat,
+  PriceList,
+  PriceListItem,
   ReadyPc,
   Review,
   SellerBrand,
+  SellerSummary,
   SpecItem,
   User,
   Vendor,
@@ -50,7 +53,8 @@ export interface PartApi {
   brand: string;
   vendorId?: string;
   available?: boolean;
-  price: number;
+  price?: number;
+  priceSet?: boolean;
   tdp: number;
   specs: SpecItem[];
   image?: string;
@@ -58,7 +62,7 @@ export interface PartApi {
 }
 
 function mapPart(p: PartApi): Part {
-  const { id, category, name, brand, vendorId, available, price, tdp, specs, image, compat } = p;
+  const { id, category, name, brand, vendorId, available, price, priceSet, tdp, specs, image, compat } = p;
   return {
     id,
     category,
@@ -67,6 +71,7 @@ function mapPart(p: PartApi): Part {
     vendorId,
     available,
     price,
+    priceSet,
     tdp,
     specs,
     image,
@@ -77,17 +82,19 @@ function mapPart(p: PartApi): Part {
 export async function fetchParts(
   category?: ComponentCategory,
   includeInactive?: boolean,
+  sellerId?: string,
 ): Promise<Part[]> {
   const params = new URLSearchParams();
   if (category) params.set("category", category);
   if (includeInactive) params.set("includeInactive", "1");
+  if (sellerId) params.set("sellerId", sellerId);
   const q = params.toString() ? `?${params.toString()}` : "";
   const rows = await req<PartApi[]>(`/parts${q}`);
   return rows.map(mapPart);
 }
 
 /** Fetch full catalog grouped by category (Uses parallel part requests). */
-export async function fetchCatalog(): Promise<Record<ComponentCategory, Part[]>> {
+export async function fetchCatalog(sellerId?: string): Promise<Record<ComponentCategory, Part[]>> {
   const cats: ComponentCategory[] = [
     "cpu",
     "gpu",
@@ -98,7 +105,7 @@ export async function fetchCatalog(): Promise<Record<ComponentCategory, Part[]>>
     "psu",
     "cooler",
   ];
-  const entries = await Promise.all(cats.map((c) => fetchParts(c).then((p) => [c, p] as const)));
+  const entries = await Promise.all(cats.map((c) => fetchParts(c, undefined, sellerId).then((p) => [c, p] as const)));
   return Object.fromEntries(entries) as Record<ComponentCategory, Part[]>;
 }
 
@@ -115,15 +122,25 @@ interface ReadyPcApi {
   inStock: boolean;
   rating: number;
   reviewCount: number;
-  parts: { category: ComponentCategory; part: PartApi | null; unavailableReason?: "deactivated" | "missing" }[];
+  parts: ConfigPartApi[];
+}
+
+interface ConfigPartApi {
+  category: ComponentCategory;
+  part: PartApi | null;
+  price?: number;
+  currentPrice?: number;
+  unavailableReason?: "deactivated" | "missing" | "no_price";
 }
 
 function mapConfigPart(
-  c: { category: ComponentCategory; part: PartApi | null; unavailableReason?: "deactivated" | "missing" },
-): { category: ComponentCategory; part: Part | null; unavailableReason?: "deactivated" | "missing" } {
+  c: ConfigPartApi,
+): { category: ComponentCategory; part: Part | null; price?: number; currentPrice?: number; unavailableReason?: "deactivated" | "missing" | "no_price" } {
   return {
     category: c.category,
     part: c.part ? mapPart(c.part) : null,
+    price: c.price,
+    currentPrice: c.currentPrice,
     unavailableReason: c.unavailableReason,
   };
 }
@@ -146,14 +163,20 @@ function mapReady(p: ReadyPcApi): ReadyPc {
   };
 }
 
-export async function fetchReadyPcs(): Promise<ReadyPc[]> {
-  const rows = await req<ReadyPcApi[]>("/ready");
+export async function fetchReadyPcs(sellerId?: string): Promise<ReadyPc[]> {
+  const params = new URLSearchParams();
+  if (sellerId) params.set("sellerId", sellerId);
+  const q = params.toString() ? `?${params.toString()}` : "";
+  const rows = await req<ReadyPcApi[]>(`/ready${q}`);
   return rows.map(mapReady);
 }
 
-export async function fetchReadyPc(id: string): Promise<ReadyPc | null> {
+export async function fetchReadyPc(id: string, sellerId?: string): Promise<ReadyPc | null> {
   try {
-    const row = await req<ReadyPcApi>(`/ready/${encodeURIComponent(id)}`);
+    const params = new URLSearchParams();
+    if (sellerId) params.set("sellerId", sellerId);
+    const q = params.toString() ? `?${params.toString()}` : "";
+    const row = await req<ReadyPcApi>(`/ready/${encodeURIComponent(id)}${q}`);
     return mapReady(row);
   } catch {
     return null;
@@ -217,17 +240,12 @@ export async function getSession(sessionId: string): Promise<SessionResult | nul
 
 // ---- Configs ----
 
-interface ConfigPartApi {
-  category: ComponentCategory;
-  part: PartApi | null;
-  unavailableReason?: "deactivated" | "missing";
-}
-
 interface ConfigApi {
   id: string;
   name: string;
   source: Config["source"];
   usage?: Config["usage"];
+  sellerId?: string;
   createdAt: number;
   updatedAt: number;
   parts: ConfigPartApi[];
@@ -239,6 +257,7 @@ function mapConfig(c: ConfigApi): Config {
     name: c.name,
     source: c.source,
     usage: c.usage,
+    sellerId: c.sellerId,
     createdAt: c.createdAt,
     updatedAt: c.updatedAt,
     parts: c.parts.map(mapConfigPart),
@@ -251,12 +270,15 @@ function configToApi(c: Config): ConfigApi {
     name: c.name,
     source: c.source,
     usage: c.usage,
+    sellerId: c.sellerId,
     createdAt: c.createdAt,
     updatedAt: c.updatedAt,
-    parts: c.parts.map(({ category, part, unavailableReason }) => ({
+    parts: c.parts.map(({ category, part, price, currentPrice, unavailableReason }) => ({
       category,
       part: (part ? part : null) as PartApi | null,
-      unavailableReason,
+      price,
+      currentPrice,
+      unavailableReason: unavailableReason as ConfigPartApi["unavailableReason"],
     })),
   };
 }
@@ -267,15 +289,21 @@ export async function fetchConfigs(userId: string): Promise<Config[]> {
 }
 
 export async function saveConfigRemote(config: Config, userId: string): Promise<Config> {
-  const body = { ...configToApi(config), parts: configToApi(config).parts.filter((p) => p.part).map(({ category, part }) => ({ category, part_id: part!.id })) };
+  const api = configToApi(config);
+  const body = {
+    name: api.name,
+    source: api.source,
+    usage: api.usage,
+    seller_id: api.sellerId,
+    parts: api.parts.filter((p) => p.part).map(({ category, part, price }) => ({
+      category,
+      part_id: part!.id,
+      price,
+    })),
+  };
   return mapConfig(await req<ConfigApi>(`/configs/${encodeURIComponent(config.id)}?userId=${encodeURIComponent(userId)}`, {
     method: "PUT",
-    body: JSON.stringify({
-      name: body.name,
-      source: body.source,
-      usage: body.usage,
-      parts: body.parts,
-    }),
+    body: JSON.stringify(body),
   }));
 }
 
@@ -426,6 +454,108 @@ export async function deleteSellerBrand(
   });
 }
 
+// ---- Sellers (catalog selector) ----
+
+export async function fetchSellerSummaries(): Promise<SellerSummary[]> {
+  return req<SellerSummary[]>("/sellers");
+}
+
+// ---- Price lists (seller/admin) ----
+
+interface PriceListApi extends PriceList {}
+
+function mapPriceList(p: PriceListApi): PriceList {
+  return { ...p, items: (p.items ?? []) as PriceListItem[] };
+}
+
+export async function fetchPriceLists(sellerId: string): Promise<PriceList[]> {
+  return (await req<PriceListApi[]>(`/seller/${encodeURIComponent(sellerId)}/price-lists`)).map(mapPriceList);
+}
+
+export async function createPriceList(
+  sellerId: string,
+  name: string,
+): Promise<PriceList> {
+  return mapPriceList(await req<PriceListApi>(`/seller/${encodeURIComponent(sellerId)}/price-lists`, {
+    method: "POST",
+    body: JSON.stringify({ name }),
+  }));
+}
+
+export async function renamePriceList(
+  sellerId: string,
+  priceListId: string,
+  name: string,
+): Promise<PriceList> {
+  return mapPriceList(await req<PriceListApi>(`/seller/${encodeURIComponent(sellerId)}/price-lists/${encodeURIComponent(priceListId)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ name }),
+  }));
+}
+
+export async function deletePriceList(
+  sellerId: string,
+  priceListId: string,
+): Promise<void> {
+  await req<void>(`/seller/${encodeURIComponent(sellerId)}/price-lists/${encodeURIComponent(priceListId)}`, {
+    method: "DELETE",
+  });
+}
+
+export async function setActivePriceList(
+  sellerId: string,
+  priceListId: string,
+): Promise<PriceList> {
+  return mapPriceList(await req<PriceListApi>(`/seller/${encodeURIComponent(sellerId)}/price-lists/${encodeURIComponent(priceListId)}/activate`, {
+    method: "POST",
+  }));
+}
+
+export async function upsertPriceListItem(
+  sellerId: string,
+  priceListId: string,
+  partId: string,
+  price: number,
+): Promise<PriceList> {
+  return mapPriceList(await req<PriceListApi>(`/seller/${encodeURIComponent(sellerId)}/price-lists/${encodeURIComponent(priceListId)}/items/${encodeURIComponent(partId)}`, {
+    method: "PUT",
+    body: JSON.stringify({ price }),
+  }));
+}
+
+export async function deletePriceListItem(
+  sellerId: string,
+  priceListId: string,
+  partId: string,
+): Promise<void> {
+  await req<void>(`/seller/${encodeURIComponent(sellerId)}/price-lists/${encodeURIComponent(priceListId)}/items/${encodeURIComponent(partId)}`, {
+    method: "DELETE",
+  });
+}
+
+export async function fetchPriceListMissing(
+  sellerId: string,
+  priceListId: string,
+  includeInactive?: boolean,
+): Promise<Part[]> {
+  const params = new URLSearchParams();
+  if (includeInactive) params.set("includeInactive", "1");
+  const q = params.toString() ? `?${params.toString()}` : "";
+  const rows = await req<PartApi[]>(`/seller/${encodeURIComponent(sellerId)}/price-lists/${encodeURIComponent(priceListId)}/items/missing${q}`);
+  return rows.map(mapPart);
+}
+
+export async function addPriceListItems(
+  sellerId: string,
+  priceListId: string,
+  partIds: string[],
+): Promise<{ added: number }> {
+  return req<{ added: number }>(`/seller/${encodeURIComponent(sellerId)}/price-lists/${encodeURIComponent(priceListId)}/items/bulk`, {
+    method: "POST",
+    body: JSON.stringify({ partIds }),
+  });
+}
+
 // ---- Vendors & components (seller/admin) ----
 
 export async function fetchVendors(): Promise<Vendor[]> {
@@ -436,7 +566,6 @@ export interface CreatePartInput {
   category: ComponentCategory;
   brand: string;
   vendor: string;
-  price: number;
   tdp: number;
   compat: PartCompat;
   specs: SpecItem[];
@@ -453,7 +582,6 @@ export async function createPart(input: CreatePartInput): Promise<Part> {
 export interface UpdatePartInput {
   brand?: string;
   vendor?: string;
-  price?: number;
   tdp?: number;
   compat?: PartCompat;
   specs?: SpecItem[];

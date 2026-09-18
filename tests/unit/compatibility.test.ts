@@ -9,6 +9,7 @@ import {
   validateConfig,
   isConfigComplete,
   isPartAvailable,
+  isPriceStale,
 } from "../../src/lib/compatibility.ts";
 import { components } from "../../src/data/mock.ts";
 import type { ComponentCategory, Part } from "../../src/types/index.ts";
@@ -34,6 +35,20 @@ const empty: Record<ComponentCategory, Part | null> = {
 function chosen(overrides: Partial<Record<ComponentCategory, Part>>) {
   return { ...empty, ...overrides };
 }
+
+/** Enrich a part with an explicit (set) positive price, as a priced price-list fetch provides. */
+const priced = (p: Part): Part => ({ ...p, priceSet: true, price: p.price });
+
+const FULL_SET: Record<ComponentCategory, Part> = {
+  cpu: priced(cat("cpu-r5-5600")),
+  gpu: priced(cat("gpu-rx-7600")),
+  motherboard: priced(cat("mb-b550-am4")),
+  ram: priced(cat("ram-ddr4-16")),
+  storage: priced(cat("ssd-1tb-nvme")),
+  case: priced(cat("case-matx")),
+  psu: priced(cat("psu-650")),
+  cooler: priced(cat("cooler-air")),
+};
 
 test("configStats sums price and tdp", () => {
   const s = configStats({
@@ -212,16 +227,7 @@ test("configStats skips null parts (missing/inaccessible slots)", () => {
 });
 
 test("isConfigComplete is false when a chosen part is unavailable", () => {
-  const base = chosen({
-    cpu: cat("cpu-r5-5600"),
-    gpu: cat("gpu-rx-7600"),
-    motherboard: cat("mb-b550-am4"),
-    ram: cat("ram-ddr4-16"),
-    storage: cat("ssd-1tb-nvme"),
-    case: cat("case-matx"),
-    psu: cat("psu-650"),
-    cooler: cat("cooler-air"),
-  });
+  const base = chosen(FULL_SET);
   assert.equal(isConfigComplete(base), true);
   assert.equal(
     isConfigComplete({ ...base, cpu: { ...base.cpu!, available: false } }),
@@ -230,19 +236,19 @@ test("isConfigComplete is false when a chosen part is unavailable", () => {
 });
   test("isConfigComplete requires all mandatory categories and clean validation", () => {
   assert.equal(isConfigComplete(chosen({})), false);
-  assert.equal(isConfigComplete(chosen({ cpu: cat("cpu-r5-5600") })), false);
+  assert.equal(isConfigComplete(chosen({ cpu: priced(cat("cpu-r5-5600")) })), false);
   // Full incompatible config (mismatched socket) is not complete.
   assert.equal(
     isConfigComplete(
       chosen({
-        cpu: cat("cpu-r5-7600"),
-        gpu: cat("gpu-rx-7600"),
-        motherboard: cat("mb-b550-am4"),
-        ram: cat("ram-ddr4-16"),
-        storage: cat("ssd-1tb-nvme"),
-        case: cat("case-matx"),
-        psu: cat("psu-650"),
-        cooler: cat("cooler-air"),
+        cpu: priced(cat("cpu-r5-7600")),
+        gpu: priced(cat("gpu-rx-7600")),
+        motherboard: priced(cat("mb-b550-am4")),
+        ram: priced(cat("ram-ddr4-16")),
+        storage: priced(cat("ssd-1tb-nvme")),
+        case: priced(cat("case-matx")),
+        psu: priced(cat("psu-650")),
+        cooler: priced(cat("cooler-air")),
       }),
     ),
     false,
@@ -251,16 +257,35 @@ test("isConfigComplete is false when a chosen part is unavailable", () => {
   assert.equal(
     isConfigComplete(
       chosen({
-        cpu: cat("cpu-r5-5600"),
-        gpu: cat("gpu-rx-7600"),
-        motherboard: cat("mb-b550-am4"),
-        ram: cat("ram-ddr4-16"),
-        storage: cat("ssd-1tb-nvme"),
-        case: cat("case-matx"),
-        psu: cat("psu-650"),
-        cooler: cat("cooler-air"),
+        cpu: priced(cat("cpu-r5-5600")),
+        gpu: priced(cat("gpu-rx-7600")),
+        motherboard: priced(cat("mb-b550-am4")),
+        ram: priced(cat("ram-ddr4-16")),
+        storage: priced(cat("ssd-1tb-nvme")),
+        case: priced(cat("case-matx")),
+        psu: priced(cat("psu-650")),
+        cooler: priced(cat("cooler-air")),
       }),
     ),
     true,
   );
+});
+
+test("isPriceStale flags only >5% absolute divergence with positive prices", () => {
+  // Within tolerance: no flag.
+  assert.equal(isPriceStale(1000, 1050), false);
+  assert.equal(isPriceStale(1000, 1040), false);
+  assert.equal(isPriceStale(1000, 960), false);
+  // More than 5% up / down.
+  assert.equal(isPriceStale(1000, 1100), true);
+  assert.equal(isPriceStale(1000, 900), true);
+  assert.equal(isPriceStale(1000, 1053), true); // just above 5%
+  // Zero / empty / negative treated as "no price" => not stale.
+  assert.equal(isPriceStale(0, 1000), false);
+  assert.equal(isPriceStale(1000, 0), false);
+  assert.equal(isPriceStale(undefined, 1000), false);
+  assert.equal(isPriceStale(1000, undefined), false);
+  assert.equal(isPriceStale(-5, 1000), false);
+  // Identical prices are not stale.
+  assert.equal(isPriceStale(2590, 2590), false);
 });

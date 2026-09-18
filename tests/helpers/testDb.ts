@@ -6,7 +6,7 @@ import { mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { components, readyPcs } from "../../src/data/mock.ts";
-import { migrateSellerBrandDescription, migrateUserAccount, migrateVendorAndAvailability } from "../../db/migrate.ts";
+import { migratePriceLists, migrateSellerBrandDescription, migrateUserAccount, migrateVendorAndAvailability } from "../../db/migrate.ts";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -63,29 +63,40 @@ function seed(db: Database.Database): void {
     return vid;
   };
   const insertPart = db.prepare(`
-    INSERT INTO part (part_id, category, name, brand, vendor_id, price_kopecks, tdp_watt, compat_json, specs_json, image_url, is_active, is_available)
-    VALUES (@part_id, @category, @name, @brand, @vendor_id, @price_kopecks, @tdp_watt, @compat_json, @specs_json, @image_url, 1, 1)
+    INSERT INTO part (part_id, category, name, brand, vendor_id, tdp_watt, compat_json, specs_json, image_url, is_active, is_available)
+    VALUES (@part_id, @category, @name, @brand, @vendor_id, @tdp_watt, @compat_json, @specs_json, @image_url, 1, 1)
     ON CONFLICT(part_id) DO UPDATE SET
       category=excluded.category, name=excluded.name, brand=excluded.brand,
       vendor_id=excluded.vendor_id,
-      price_kopecks=excluded.price_kopecks, tdp_watt=excluded.tdp_watt,
-      compat_json=excluded.compat_json, specs_json=excluded.specs_json,
-      image_url=excluded.image_url, is_active=1, is_available=1
+      tdp_watt=excluded.tdp_watt, compat_json=excluded.compat_json,
+      specs_json=excluded.specs_json, image_url=excluded.image_url, is_active=1, is_available=1
   `);
   const insertReady = db.prepare(`
-    INSERT INTO ready_pc (ready_pc_id, name, brand, usage, price_kopecks, tdp_watt, summary, specs_json, image_url, in_stock, rating, is_active)
-    VALUES (@id, @name, @brand, @usage, @price_kopecks, @tdp_watt, @summary, @specs_json, @image_url, @in_stock, @rating, 1)
+    INSERT INTO ready_pc (ready_pc_id, name, brand, usage, price_kopecks, tdp_watt, summary, specs_json, image_url, in_stock, rating, is_active, seller_id)
+    VALUES (@id, @name, @brand, @usage, @price_kopecks, @tdp_watt, @summary, @specs_json, @image_url, @in_stock, @rating, 1, @seller_id)
     ON CONFLICT(ready_pc_id) DO UPDATE SET
       name=excluded.name, brand=excluded.brand, usage=excluded.usage,
       price_kopecks=excluded.price_kopecks, tdp_watt=excluded.tdp_watt,
       summary=excluded.summary, specs_json=excluded.specs_json,
       image_url=excluded.image_url, in_stock=excluded.in_stock,
-      rating=excluded.rating, is_active=1
+      rating=excluded.rating, seller_id=excluded.seller_id, is_active=1
   `);
   const insertReadyPart = db.prepare(`
     INSERT INTO ready_pc_part (ready_pc_id, part_id, category)
     VALUES (@ready_pc_id, @part_id, @category)
     ON CONFLICT(ready_pc_id, part_id) DO NOTHING
+  `);
+
+  const insertPriceList = db.prepare(`
+    INSERT INTO price_list (price_list_id, seller_id, name, is_active)
+    VALUES (@id, @seller_id, @name, @is_active)
+    ON CONFLICT(price_list_id) DO UPDATE SET
+      name=excluded.name, is_active=excluded.is_active
+  `);
+  const insertPriceListItem = db.prepare(`
+    INSERT INTO price_list_item (price_list_id, part_id, price_kopecks)
+    VALUES (@price_list_id, @part_id, @price_kopecks)
+    ON CONFLICT(price_list_id, part_id) DO UPDATE SET price_kopecks=excluded.price_kopecks
   `);
 
   const upsertAccount = db.prepare(`
@@ -110,9 +121,12 @@ function seed(db: Database.Database): void {
     db.prepare("DELETE FROM user_account").run();
     db.prepare("DELETE FROM ready_pc_part").run();
     db.prepare("DELETE FROM ready_pc").run();
+    db.prepare("DELETE FROM price_list_item").run();
+    db.prepare("DELETE FROM price_list").run();
     db.prepare("DELETE FROM part").run();
     db.prepare("DELETE FROM vendor").run();
 
+    const partPrices = new Map<string, number>();
     let n = 0;
     for (const cat of CATEGORIES) {
       for (const p of (components as Record<string, unknown[]>)[cat] ?? []) {
@@ -121,13 +135,29 @@ function seed(db: Database.Database): void {
         insertPart.run({
           part_id: row.id, category: cat, name: composeName(row.brand, model), brand: model,
           vendor_id: ensureVendor(row.brand),
-          price_kopecks: Math.round(row.price * 100), tdp_watt: Math.round(row.tdp),
+          tdp_watt: Math.round(row.tdp),
           compat_json: compatJson(row), specs_json: specsJson(row as { specs?: unknown[] }),
           image_url: row.image ?? null,
         });
+        partPrices.set(row.id, row.price);
         n++;
       }
     }
+    // Accounts first so ready_pc / price_list FKs resolve (fresh DB has no rows).
+    upsertAccount.run({
+      user_id: "usr-admin", name: "Администратор", email: "avgordeev@alfabank.ru",
+      phone: null, role: "admin", company: null,
+    });
+    upsertAccount.run({
+      user_id: "usr-seller", name: "Продавец Confi", email: "user@company.com",
+      phone: null, role: "seller", company: "ConfiГУРУ",
+    });
+    insertSellerBrand.run({
+      seller_id: "usr-seller",
+      brand: "Confi",
+      description: "Собственные сборки Confi",
+    });
+
     for (const rp of readyPcs) {
       const parts = rp.parts.map((pp) => pp.part);
       insertReady.run({
@@ -135,6 +165,7 @@ function seed(db: Database.Database): void {
         price_kopecks: Math.round(rp.price * 100), tdp_watt: Math.round(rp.tdp),
         summary: rp.summary, specs_json: JSON.stringify(rp.specs ?? []),
         image_url: rp.image ?? null, in_stock: rp.inStock ? 1 : 0, rating: rp.rating,
+        seller_id: "usr-seller",
       });
       for (const { category, part } of rp.parts) {
         if (!part) continue;
@@ -142,19 +173,17 @@ function seed(db: Database.Database): void {
       }
     }
 
-    upsertAccount.run({
-      user_id: "usr-admin", name: "Администратор", email: "avgordeev@alfabank.ru",
-      phone: null, role: "admin", company: null,
-    });
-    upsertAccount.run({
-      user_id: "usr-seller", name: "Продавец Confi", email: "user@company.com",
-      phone: null, role: "seller", company: "Confi Маркет",
-    });
-    insertSellerBrand.run({
-      seller_id: "usr-seller",
-      brand: "Confi",
-      description: "Собственные сборки Confi",
-    });
+    // Seller ConfiГУРА: active price list "Основной" with all catalog parts.
+    const PL = "pl-main";
+    insertPriceList.run({ id: PL, seller_id: "usr-seller", name: "Основной", is_active: 1 });
+    db.prepare(`UPDATE price_list SET is_active=0 WHERE seller_id='usr-seller' AND price_list_id<>?`).run(PL);
+    for (const [partId, price] of partPrices) {
+      insertPriceListItem.run({
+        price_list_id: PL,
+        part_id: partId,
+        price_kopecks: Math.round(Number(price) * 100),
+      });
+    }
 
     return n;
   });
@@ -172,6 +201,7 @@ export function initTestDb(dbPath = TEST_DB_PATH): string {
   migrateUserAccount(db);
   migrateSellerBrandDescription(db);
   migrateVendorAndAvailability(db);
+  migratePriceLists(db);
   seed(db);
   db.close();
   return dbPath;

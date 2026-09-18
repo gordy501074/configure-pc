@@ -12,6 +12,7 @@ interface ComponentPickerProps {
   category: ComponentCategory;
   chosen: Record<ComponentCategory, Part | null>;
   onSelect: (part: Part) => void;
+  sellerId?: string;
 }
 
 export function ComponentPicker({
@@ -20,6 +21,7 @@ export function ComponentPicker({
   category,
   chosen,
   onSelect,
+  sellerId,
 }: ComponentPickerProps) {
   const [parts, setParts] = useState<Part[]>([]);
   const [loading, setLoading] = useState(false);
@@ -29,7 +31,7 @@ export function ComponentPicker({
     let cancelled = false;
     setLoading(true);
     setParts([]);
-    fetchParts(category).then((list) => {
+    fetchParts(category, undefined, sellerId).then((list) => {
       if (cancelled) return;
       setParts(list);
       setLoading(false);
@@ -37,12 +39,15 @@ export function ComponentPicker({
     return () => {
       cancelled = true;
     };
-  }, [open, category]);
+  }, [open, category, sellerId]);
 
   if (!open) return null;
 
   const incompat = (p: Part) =>
     checkPartCompatibility(p, { ...chosen, [category]: p });
+
+  const noPrice = (p: Part) =>
+    !(p.priceSet === true) || p.price === undefined || p.price <= 0;
 
   return (
     <Modal
@@ -61,7 +66,7 @@ export function ComponentPicker({
         ) : (
           parts.map((p) => {
             const issues = incompat(p);
-            const blocked = issues.length > 0;
+            const blocked = issues.length > 0 || noPrice(p);
             return (
               <div key={p.id} className="flex flex-col gap-1">
                 <button
@@ -78,12 +83,19 @@ export function ComponentPicker({
                     <span className="truncate font-medium">{p.name}</span>
                   </span>
                   <span className="flex shrink-0 flex-col items-end text-sm">
-                    <span className="font-semibold">{formatPrice(p.price)}</span>
+                    <span className="font-semibold">
+                      {p.price !== undefined ? formatPrice(p.price) : "—"}
+                    </span>
                     <span className="text-muted-foreground">{formatWatts(p.tdp)}</span>
                   </span>
                   {blocked ? <Badge variant="destructive">Несовместимо</Badge> : null}
                 </button>
-                {blocked ? (
+                {noPrice(p) ? (
+                  <p className="px-1 text-sm text-muted-foreground">
+                    Компонент недоступен у выбранного продавца
+                  </p>
+                ) : null}
+                {blocked && issues.length > 0 ? (
                   <p className="px-1 text-sm text-destructive">
                     <span aria-hidden="true">⚠ </span>
                     {issues[0]}

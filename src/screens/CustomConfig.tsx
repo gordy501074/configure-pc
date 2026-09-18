@@ -11,12 +11,14 @@ import {
   useToast,
 } from "../components/ui";
 import { ComponentPicker } from "../components/shared/ComponentPicker";
+import { SellerPicker } from "../components/shared/SellerPicker";
 import { ReviewDialog } from "../components/shared/ReviewDialog";
 import { InstallmentPlan } from "../components/shared/InstallmentPlan";
 import { CATEGORY_LABELS, formatPrice, formatWatts } from "../lib/format";
 import { configStats, validateConfig, isConfigComplete } from "../lib/compatibility";
 import { saveConfigAction, shareAction } from "../lib/actions";
 import { useAuth } from "../lib/auth";
+import { useSeller } from "../lib/useSeller";
 import { uid } from "../lib/session";
 import type { ComponentCategory, Config, Part } from "../types";
 
@@ -47,6 +49,7 @@ export default function CustomConfig() {
   const location = useLocation();
   const { toast } = useToast();
   const { user, isCustomer } = useAuth();
+  const { sellerId, sellers, setSellerId, loading: sellerLoading } = useSeller();
 
   const [chosen, setChosen] = useState<Record<ComponentCategory, Part | null>>({
     ...EMPTY_CHOSEN,
@@ -100,6 +103,20 @@ export default function CustomConfig() {
     setChosen((prev) => ({ ...prev, [category]: null }));
   };
 
+  const buildConfig = (): Config => ({
+    id: uid("cfg"),
+    name: name.trim() || "Моя сборка",
+    parts: CATEGORY_ORDER.filter((c) => chosen[c]).map((c) => ({
+      category: c,
+      part: chosen[c]!,
+      price: chosen[c]!.price,
+    })),
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    source: "custom",
+    sellerId,
+  });
+
   const handleSave = async () => {
     if (!complete) {
       toast("Заполните все категории без ошибок совместимости", "error");
@@ -110,17 +127,7 @@ export default function CustomConfig() {
       navigate("/auth");
       return;
     }
-    const config: Config = {
-      id: uid("cfg"),
-      name: name.trim() || "Моя сборка",
-      parts: CATEGORY_ORDER.filter((c) => chosen[c]).map((c) => ({
-        category: c,
-        part: chosen[c]!,
-      })),
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-      source: "custom",
-    };
+    const config = buildConfig();
     const res = await saveConfigAction(config, user.id);
     toast(res.message);
   };
@@ -130,21 +137,12 @@ export default function CustomConfig() {
       toast("Сначала соберите корректную конфигурацию", "error");
       return;
     }
+    const config = buildConfig();
     navigate("/checkout", {
       state: {
         orderTitle: name,
         total: stats.totalPrice,
-        config: {
-          id: uid("cfg"),
-          name,
-          parts: CATEGORY_ORDER.filter((c) => chosen[c]).map((c) => ({
-            category: c,
-            part: chosen[c]!,
-          })),
-          createdAt: Date.now(),
-          updatedAt: Date.now(),
-          source: "custom",
-        },
+        config,
       },
     });
   };
@@ -218,7 +216,7 @@ export default function CustomConfig() {
                       </span>
                     </div>
                     <span className="whitespace-nowrap font-semibold">
-                      {formatPrice(part.price)}
+                      {formatPrice(part.price ?? 0)}
                     </span>
                   </div>
                 ) : (
@@ -249,6 +247,9 @@ export default function CustomConfig() {
 
         <aside className="flex flex-col" aria-label="Сводка">
           <Card className="sticky top-20 flex-col gap-3 p-4">
+            {!sellerLoading ? (
+              <SellerPicker sellers={sellers} value={sellerId} onChange={setSellerId} />
+            ) : null}
             <h2 className="text-lg font-semibold">Сводка</h2>
             <div className="flex justify-between text-sm">
               <span className="text-muted-foreground">Компонентов</span>
@@ -285,17 +286,7 @@ export default function CustomConfig() {
                 total={stats.totalPrice}
                 state={{
                   orderTitle: name,
-                  config: {
-                    id: uid("cfg"),
-                    name,
-                    parts: CATEGORY_ORDER.filter((c) => chosen[c]).map((c) => ({
-                      category: c,
-                      part: chosen[c]!,
-                    })),
-                    createdAt: Date.now(),
-                    updatedAt: Date.now(),
-                    source: "custom",
-                  },
+                  config: buildConfig(),
                 }}
               />
             ) : null}
@@ -321,6 +312,7 @@ export default function CustomConfig() {
           category={pickerCat}
           chosen={chosen}
           onSelect={(p) => selectPart(pickerCat, p)}
+          sellerId={sellerId}
         />
       ) : null}
 

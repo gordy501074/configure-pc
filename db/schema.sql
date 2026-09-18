@@ -1,7 +1,7 @@
--- Confi SQLite schema (STRICT, WAL). Version 6.
+-- Confi SQLite schema (STRICT, WAL). Version 7.
 -- DDL per plan section 2. Applied idempotently by db:init / db:seed.
 
-PRAGMA user_version = 6;
+PRAGMA user_version = 7;
 PRAGMA journal_mode = WAL;
 
 -- Vendors (trademarks) referenced by parts. Populated on the fly from part.brand.
@@ -17,7 +17,6 @@ CREATE TABLE IF NOT EXISTS part (
   name          TEXT NOT NULL,
   brand         TEXT NOT NULL,
   vendor_id     TEXT,
-  price_kopecks INTEGER NOT NULL CHECK (price_kopecks >= 0),
   tdp_watt      INTEGER NOT NULL DEFAULT 0 CHECK (tdp_watt BETWEEN 0 AND 65355),
   -- Stores the PartCompat document as JSON: { v: 2, ...compat } (see src/types).
   compat_json   TEXT NOT NULL,
@@ -43,7 +42,9 @@ CREATE TABLE IF NOT EXISTS ready_pc (
   in_stock      INTEGER NOT NULL DEFAULT 1 CHECK (in_stock IN (0,1)),
   rating        REAL NOT NULL DEFAULT 5 CHECK (rating BETWEEN 0 AND 5),
   is_active     INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0,1)),
-  created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  seller_id     TEXT,
+  created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  FOREIGN KEY (seller_id) REFERENCES user_account(user_id) ON DELETE SET NULL
 ) STRICT;
 
 -- junction: ready PC <-> component
@@ -74,15 +75,18 @@ CREATE TABLE IF NOT EXISTS config (
   name       TEXT NOT NULL DEFAULT 'Моя сборка',
   source     TEXT NOT NULL DEFAULT 'custom' CHECK (source IN ('custom','auto','ready')),
   usage      TEXT CHECK (usage IN ('gaming','work','video','universal')),
+  seller_id  TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-  FOREIGN KEY (user_id) REFERENCES user_account(user_id) ON DELETE CASCADE
+  FOREIGN KEY (user_id) REFERENCES user_account(user_id) ON DELETE CASCADE,
+  FOREIGN KEY (seller_id) REFERENCES user_account(user_id) ON DELETE SET NULL
 ) STRICT;
 
 CREATE TABLE IF NOT EXISTS config_part (
-  config_id TEXT NOT NULL,
-  category  TEXT NOT NULL CHECK (category IN ('cpu','gpu','motherboard','ram','storage','case','psu','cooler')),
-  part_id   TEXT,
+  config_id     TEXT NOT NULL,
+  category      TEXT NOT NULL CHECK (category IN ('cpu','gpu','motherboard','ram','storage','case','psu','cooler')),
+  part_id       TEXT,
+  price_kopecks INTEGER NOT NULL DEFAULT 0 CHECK (price_kopecks >= 0),
   PRIMARY KEY (config_id, category),
   FOREIGN KEY (config_id) REFERENCES config(config_id) ON DELETE CASCADE,
   FOREIGN KEY (part_id) REFERENCES part(part_id) ON DELETE SET NULL
@@ -165,6 +169,27 @@ CREATE TABLE IF NOT EXISTS kv_store (
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 ) STRICT;
 
+-- Seller price lists: a seller owns many price lists, exactly one is active.
+CREATE TABLE IF NOT EXISTS price_list (
+  price_list_id TEXT PRIMARY KEY,
+  seller_id     TEXT NOT NULL,
+  name          TEXT NOT NULL,
+  is_active     INTEGER NOT NULL DEFAULT 0 CHECK (is_active IN (0,1)),
+  created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  UNIQUE (seller_id, name),
+  FOREIGN KEY (seller_id) REFERENCES user_account(user_id) ON DELETE CASCADE
+) STRICT;
+
+-- Price list items: part_id + price (kopecks). price_kopecks=0 => "недоступен для заказа".
+CREATE TABLE IF NOT EXISTS price_list_item (
+  price_list_id TEXT NOT NULL,
+  part_id       TEXT,
+  price_kopecks INTEGER NOT NULL DEFAULT 0 CHECK (price_kopecks >= 0),
+  PRIMARY KEY (price_list_id, part_id),
+  FOREIGN KEY (price_list_id) REFERENCES price_list(price_list_id) ON DELETE CASCADE,
+  FOREIGN KEY (part_id) REFERENCES part(part_id) ON DELETE SET NULL
+) STRICT, WITHOUT ROWID;
+
 -- Telemetry: anonymized user-action events ingested from the SPA analytics client.
 CREATE TABLE IF NOT EXISTS analytics_events (
   event_id   INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -196,3 +221,6 @@ CREATE INDEX IF NOT EXISTS idx_review_ready    ON review(ready_pc_id);
 CREATE INDEX IF NOT EXISTS idx_review_entity   ON review(entity_slug);
 CREATE INDEX IF NOT EXISTS idx_session_user    ON auth_session(user_id);
 CREATE INDEX IF NOT EXISTS idx_pending_phone   ON auth_pending(phone);
+CREATE INDEX IF NOT EXISTS idx_price_list_seller    ON price_list(seller_id);
+CREATE INDEX IF NOT EXISTS idx_price_list_active    ON price_list(seller_id, is_active);
+CREATE INDEX IF NOT EXISTS idx_price_list_item_part ON price_list_item(part_id);

@@ -29,7 +29,7 @@ export interface VendorDto {
 }
 
 /** Why a part in a saved config can't be ordered. */
-export type UnavailableReason = "deactivated" | "missing";
+export type UnavailableReason = "deactivated" | "missing" | "no_price";
 
 export type FormFactor = "ATX" | "mATX" | "ITX";
 export type RamType = "DDR4" | "DDR5";
@@ -61,7 +61,6 @@ export interface PartRow {
   name: string;
   brand: string;
   vendor_id: string | null;
-  price_kopecks: number;
   tdp_watt: number;
   compat_json: string;
   specs_json: string;
@@ -71,7 +70,8 @@ export interface PartRow {
   created_at: string;
 }
 
-/** API-facing part (rubles, parsed jsons). */
+/** API-facing part (rubles, parsed jsons). `price`/`priceSet` are present only when
+ *  resolved from a seller's active price list (see `attachPrices`). */
 export interface PartDto {
   id: string;
   category: ComponentCategory;
@@ -79,7 +79,8 @@ export interface PartDto {
   brand: string;
   vendorId?: string;
   available: boolean;
-  price: number;
+  price?: number;
+  priceSet?: boolean;
   tdp: number;
   specs: SpecItem[];
   image?: string;
@@ -99,6 +100,7 @@ export interface ReadyPcRow {
   in_stock: number;
   rating: number;
   is_active: number;
+  seller_id: string | null;
   created_at: string;
 }
 
@@ -144,6 +146,7 @@ export interface ConfigRow {
   name: string;
   source: ConfigSource;
   usage: Usage | null;
+  seller_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -153,6 +156,7 @@ export interface ConfigDto {
   name: string;
   source: ConfigSource;
   usage?: Usage;
+  sellerId?: string;
   createdAt: number;
   updatedAt: number;
   parts: ConfigPartDto[];
@@ -161,6 +165,10 @@ export interface ConfigDto {
 export interface ConfigPartDto {
   category: ComponentCategory;
   part: PartDto | null;
+  /** Snapshot price (copy from `config_part.price_kopecks`) for custom/auto. */
+  price?: number;
+  /** Current price from the config.seller_id active price list (custom/auto comparison). */
+  currentPrice?: number;
   /** When `part` is null, the reason the slot is unavailable. */
   unavailableReason?: UnavailableReason;
 }
@@ -263,11 +271,26 @@ export function partToDto(row: PartRow): PartDto {
     brand: row.brand,
     vendorId: row.vendor_id ?? undefined,
     available: row.is_active === 1 && row.is_available === 1,
-    price: row.price_kopecks / 100,
     tdp: row.tdp_watt,
     specs: JSON.parse(row.specs_json || "[]"),
     image: row.image_url ?? undefined,
     compat: decodeCompat(row.compat_json),
+  };
+}
+
+/** Copy of a PartDto with a price attached from a price-list item. */
+export function attachPrice(part: PartDto, priceKopecks: number | null): PartDto {
+  const price =
+    priceKopecks !== null && priceKopecks >= 0 ? priceKopecks / 100 : undefined;
+  const priceSet = priceKopecks !== null;
+  const available =
+    part.available &&
+    (priceKopecks === null || priceKopecks > 0);
+  return {
+    ...part,
+    price,
+    priceSet,
+    available,
   };
 }
 
@@ -310,6 +333,7 @@ export function configToDto(
     name: row.name,
     source: row.source,
     usage: row.usage ?? undefined,
+    sellerId: row.seller_id ?? undefined,
     createdAt: Date.parse(row.created_at),
     updatedAt: Date.parse(row.updated_at),
     parts,

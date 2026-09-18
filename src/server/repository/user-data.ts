@@ -16,6 +16,7 @@ import type {
   ReadyPcRow,
   ReviewDto,
   ReviewRow,
+  UnavailableReason,
   Usage,
   UserDto,
   UserRow,
@@ -29,7 +30,8 @@ export interface SaveConfigInput {
   name: string;
   source: ConfigSource;
   usage?: Usage;
-  parts: { category: string; part_id: string }[];
+  seller_id?: string;
+  parts: { category: string; part_id: string; price?: number }[];
 }
 
 export interface SaveOrderInput {
@@ -142,23 +144,32 @@ export function createUserRepository(db: Database): UserDataRepository {
   );
   const getConfigStmt = db.prepare(`SELECT * FROM config WHERE config_id = ?`);
   const upsertConfigStmt = db.prepare(
-    `INSERT INTO config (config_id, user_id, name, source, usage, created_at, updated_at)
-     VALUES (@id, @user_id, @name, @source, @usage,
+    `INSERT INTO config (config_id, user_id, name, source, usage, seller_id, created_at, updated_at)
+     VALUES (@id, @user_id, @name, @source, @usage, @seller_id,
              @created_at, @updated_at)
      ON CONFLICT(config_id) DO UPDATE SET
        user_id=excluded.user_id, name=excluded.name, source=excluded.source,
-       usage=excluded.usage, updated_at=excluded.updated_at`,
+       usage=excluded.usage, seller_id=excluded.seller_id,
+       updated_at=excluded.updated_at`,
   );
   const delConfigStmt = db.prepare(`DELETE FROM config WHERE config_id = ?`);
   const configPartIdsStmt = db.prepare(
-    `SELECT part_id, category FROM config_part WHERE config_id = ? ORDER BY category`,
+    `SELECT part_id, category, price_kopecks FROM config_part WHERE config_id = ? ORDER BY category`,
   );
   const insertConfigPartStmt = db.prepare(
-    `INSERT INTO config_part (config_id, category, part_id) VALUES (?, ?, ?)
-     ON CONFLICT(config_id, category) DO UPDATE SET part_id=excluded.part_id`,
+    `INSERT INTO config_part (config_id, category, part_id, price_kopecks) VALUES (?, ?, ?, ?)
+     ON CONFLICT(config_id, category) DO UPDATE SET part_id=excluded.part_id, price_kopecks=excluded.price_kopecks`,
   );
   const delConfigPartsStmt = db.prepare(
     `DELETE FROM config_part WHERE config_id = ?`,
+  );
+
+  // --- price lists (price resolution for configs) ---
+  const activePriceListIdStmt = db.prepare(
+    `SELECT price_list_id FROM price_list WHERE seller_id = ? AND is_active = 1 ORDER BY created_at DESC LIMIT 1`,
+  );
+  const priceForStmt = db.prepare(
+    `SELECT price_kopecks FROM price_list_item WHERE price_list_id = ? AND part_id = ?`,
   );
 
   // --- orders ---
@@ -226,10 +237,14 @@ export function createUserRepository(db: Database): UserDataRepository {
 
   const now = (): string => new Date().toISOString();
 
-  function configPartsFor(configId: string): ConfigPartDto[] {
+  function configPartsFor(config: ConfigRow): ConfigPartDto[] {
+    const configId = config.config_id;
+    const source = config.source;
+    const sellerId = config.seller_id ?? undefined;
     const links = configPartIdsStmt.all(configId) as {
       part_id: string | null;
       category: string;
+      price_kopecks: number;
     }[];
     const resolved = links
       .map((l) =>
@@ -241,16 +256,61 @@ export function createUserRepository(db: Database): UserDataRepository {
       )
       .filter((r): r is PartRow => !!r);
     const byId = new Map(resolved.map((r) => [r.part_id, partToDto(r)]));
+
+    // Current price comes from the config.seller_id active price list.
+    const priceListId = sellerId
+      ? (activePriceListIdStmt.get(sellerId) as { price_list_id: string } | undefined)
+      : undefined;
+    const currentPriceOf = (partId: string): number | undefined => {
+      if (!priceListId) return undefined;
+      const p = priceForStmt.get(priceListId.price_list_id, partId) as
+        | { price_kopecks: number }
+        | undefined;
+      return p?.price_kopecks;
+    };
+
     return links.map((l) => {
       const category = l.category as ConfigPartDto["category"];
       if (!l.part_id) {
         return { category, part: null, unavailableReason: "missing" };
       }
-      const part = byId.get(l.part_id);
-      if (!part || !part.available) {
-        return { category, part: null, unavailableReason: "deactivated" };
+      const base = byId.get(l.part_id);
+      if (!base || !base.available) {
+        return {
+          category,
+          part: null,
+          price: l.price_kopecks > 0 ? l.price_kopecks / 100 : undefined,
+          currentPrice: currentPriceOf(l.part_id),
+          unavailableReason: "deactivated",
+        };
       }
-      return { category, part };
+      const current = currentPriceOf(l.part_id);
+      const currentRub = current !== undefined ? current / 100 : undefined;
+
+      if (source === "ready") {
+        // Live re-pricing: the part carries its current price from the active list.
+        const orderable = current !== undefined && current > 0;
+        const livePart = { ...base, price: currentRub, priceSet: current !== undefined };
+        return {
+          category,
+          part: orderable ? livePart : null,
+          price: currentRub,
+          currentPrice: currentRub,
+          ...(orderable ? {} : { unavailableReason: "no_price" as UnavailableReason }),
+        };
+      }
+
+      // custom/auto: snapshot price on the part, currentPrice for the -5% check.
+      const snapshot = l.price_kopecks > 0 ? l.price_kopecks / 100 : undefined;
+      const snapshotPart = { ...base, price: snapshot, priceSet: snapshot !== undefined };
+      const orderable = current !== undefined && current > 0;
+      return {
+        category,
+        part: orderable ? snapshotPart : null,
+        price: snapshot,
+        currentPrice: currentRub,
+        ...(orderable ? {} : { unavailableReason: "no_price" as UnavailableReason }),
+      };
     });
   }
 
@@ -360,12 +420,12 @@ export function createUserRepository(db: Database): UserDataRepository {
 
     listConfigs(userId) {
       const rows = listConfigsStmt.all(userId) as ConfigRow[];
-      return rows.map((r) => configToDto(r, configPartsFor(r.config_id)));
+      return rows.map((r) => configToDto(r, configPartsFor(r)));
     },
 
     getConfig(id) {
       const row = getConfigStmt.get(id) as ConfigRow | undefined;
-      return row ? configToDto(row, configPartsFor(id)) : null;
+      return row ? configToDto(row, configPartsFor(row)) : null;
     },
 
     saveConfig(input) {
@@ -376,17 +436,24 @@ export function createUserRepository(db: Database): UserDataRepository {
         name: input.name,
         source: input.source,
         usage: input.usage ?? null,
+        seller_id: input.seller_id ?? "usr-seller",
         created_at,
         updated_at: created_at,
       });
       const del = db.transaction(() => {
         delConfigPartsStmt.run(input.id);
         for (const p of input.parts) {
-          insertConfigPartStmt.run(input.id, p.category, p.part_id);
+          insertConfigPartStmt.run(
+            input.id,
+            p.category,
+            p.part_id,
+            p.price !== undefined ? Math.round(p.price * 100) : 0,
+          );
         }
       });
       del();
-      return this.getConfig(input.id)!;
+      const row = getConfigStmt.get(input.id) as ConfigRow;
+      return configToDto(row, configPartsFor(row));
     },
 
     deleteConfig(id) {

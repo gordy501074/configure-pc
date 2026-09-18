@@ -72,7 +72,7 @@ export default function InstallmentCheckout() {
         kind: "config" as const,
         refId: part.id,
         name: part.name,
-        price: part.price,
+        price: part.price ?? 0,
         count: 1,
       }));
 
@@ -308,7 +308,7 @@ export default function InstallmentCheckout() {
                       className="flex items-center justify-between gap-3 text-sm"
                     >
                       <span className="truncate text-muted-foreground">{part.name}</span>
-                      <span className="whitespace-nowrap">{formatPrice(part.price)}</span>
+                      <span className="whitespace-nowrap">{formatPrice(part.price ?? 0)}</span>
                     </div>
                   );
                 })

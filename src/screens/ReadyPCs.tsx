@@ -15,7 +15,9 @@ import {
   Skeleton,
 } from "../components/ui";
 import { ReadyPcCard } from "../components/shared/ReadyPcCard";
+import { SellerPicker } from "../components/shared/SellerPicker";
 import { fetchReadyPcs } from "../lib/api";
+import { useSeller } from "../lib/useSeller";
 import { USAGE_LABELS } from "../lib/format";
 import { cn } from "../lib/utils";
 import type { ReadyPc, Usage } from "../types";
@@ -34,6 +36,7 @@ export default function ReadyPCs() {
   const [params, setParams] = useSearchParams();
   const [loadState, setLoadState] = useState<"loading" | "done">("loading");
   const [pcs, setPcs] = useState<ReadyPc[]>([]);
+  const { sellerId, sellers, setSellerId, loading: sellerLoading } = useSeller();
 
   const [filters, setFilters] = useState<Filters>(() => ({
     usage: (params.get("usage") as Filters["usage"]) || "all",
@@ -46,7 +49,7 @@ export default function ReadyPCs() {
   useEffect(() => {
     setLoadState("loading");
     let cancelled = false;
-    fetchReadyPcs().then((list) => {
+    fetchReadyPcs(sellerId).then((list) => {
       if (cancelled) return;
       setPcs(list);
       setLoadState("done");
@@ -54,7 +57,7 @@ export default function ReadyPCs() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [sellerId]);
 
   const BRANDS = useMemo(() => Array.from(new Set(pcs.map((p) => p.brand))), [pcs]);
 
@@ -110,10 +113,17 @@ export default function ReadyPCs() {
   return (
     <div className="container">
       <Breadcrumbs items={[{ label: "Главная", to: "/" }, { label: "Готовые ПК" }]} />
-      <h1 className="mb-2 text-3xl font-bold">Готовые ПК</h1>
-      <p className="mb-5 text-muted-foreground">
-        Проверенные сборки под разные задачи и бюджеты.
-      </p>
+      <div className="mb-2 flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h1 className="text-3xl font-bold">Готовые ПК</h1>
+          <p className="mt-1 text-muted-foreground">
+            Проверенные сборки под разные задачи и бюджеты.
+          </p>
+        </div>
+        {!sellerLoading ? (
+          <SellerPicker sellers={sellers} value={sellerId} onChange={setSellerId} />
+        ) : null}
+      </div>
 
       <Card className="mb-5 p-4">
         <form

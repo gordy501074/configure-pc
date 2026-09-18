@@ -31,6 +31,11 @@ const EMPTY: Record<ComponentCategory, Part | null> = {
   cooler: null,
 };
 
+/** True when a part is orderable (has a positive price from the seller's list). */
+function isOrderable(p: Part): boolean {
+  return (p.priceSet === true && p.price !== undefined && p.price > 0) || (p.price ?? 0) > 0;
+}
+
 /** Pick the best part in a category by score (optionally filtered). */
 function pick(
   category: ComponentCategory,
@@ -51,8 +56,9 @@ function pick(
 
 /** Score a part against budget & priority. */
 function budgetScore(p: Part, budget: number, priority: Priority): number {
-  if (p.price > budget) return -Infinity;
-  const fit = 1 - Math.abs(budget - p.price) / Math.max(budget, 1);
+  if (!isOrderable(p) || (p.price ?? 0) > budget) return -Infinity;
+  const price = p.price ?? 0;
+  const fit = 1 - Math.abs(budget - price) / Math.max(budget, 1);
   const perf = p.compat.benches?.[0]?.score ?? 0;
   if (priority === "price") return fit * 100;
   if (priority === "perf") return perf / 100;
@@ -115,10 +121,10 @@ export function buildRecommendation(
       "gpu",
       components,
       (p) =>
-        p.price <= gpuBudget
+        isOrderable(p) && (p.price ?? 0) <= gpuBudget
           ? (p.compat.benches?.[0]?.score ?? 0) * (priority === "price" ? 0.4 : 1)
           : -Infinity,
-    ) ?? components.gpu[0];
+    ) ?? components.gpu.find(isOrderable) ?? null;
 
   const storage = budget >= 150000 ? "ssd-2tb-nvme" : "ssd-1tb-nvme";
   chosen.storage =
@@ -142,8 +148,8 @@ export function buildRecommendation(
   if (chosen.cpu) {
     const tdp = chosen.cpu.tdp;
     const capable = components.cooler
-      .filter((c) => (c.compat.coolTdp ?? 0) >= tdp)
-      .sort((a, b) => a.price - b.price);
+      .filter((c) => isOrderable(c) && (c.compat.coolTdp ?? 0) >= tdp)
+      .sort((a, b) => (a.price ?? 0) - (b.price ?? 0));
     if (priority === "silent") {
       const aio = capable.find((c) =>
         c.specs?.some((s) => s.label === "Тип" && s.value.includes("СЖО")),

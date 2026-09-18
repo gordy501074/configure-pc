@@ -16,6 +16,14 @@
 
 import type Database from "better-sqlite3";
 
+/** Helpers for building idempotent table-rebuild migrations (STRICT-safe). */
+function tableSql(db: Database.Database, name: string): string | undefined {
+  const row = db
+    .prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name=?`)
+    .get(name) as { sql: string } | undefined;
+  return row?.sql;
+}
+
 const NEW_USER_ACCOUNT = `
 CREATE TABLE new_user_account (
   user_id    TEXT PRIMARY KEY,
@@ -275,6 +283,209 @@ export function migrateVendorAndAvailability(db: Database.Database): void {
     if (Array.isArray(integrity) && integrity.length > 0) {
       throw new Error(
         `vendor migration left FK violations: ${JSON.stringify(integrity)}`,
+      );
+    }
+  } finally {
+    db.pragma("foreign_keys = ON");
+  }
+}
+
+// ---- v7: seller price lists + price removed from part, snapshot in config_part ----
+
+/**
+ * True when the schema has already reached v7: `price_list` tables exist,
+ * `part` has no `price_kopecks`, `config_part` has `price_kopecks`, and
+ * `config` / `ready_pc` have `seller_id`.
+ */
+function priceListsIsMigrated(db: Database.Database): boolean {
+  const pl = db
+    .prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='price_list'`)
+    .get();
+  if (!pl) return false;
+  const plt = db
+    .prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='price_list_item'`)
+    .get();
+  if (!plt) return false;
+  const part = tableSql(db, "part");
+  if (!part || /price_kopecks/i.test(part)) return false;
+  const cfgPart = tableSql(db, "config_part");
+  if (!cfgPart || !/price_kopecks/i.test(cfgPart)) return false;
+  const cfg = tableSql(db, "config");
+  if (!cfg || !/seller_id/i.test(cfg)) return false;
+  const ready = tableSql(db, "ready_pc");
+  if (!ready || !/seller_id/i.test(ready)) return false;
+  return true;
+}
+
+/**
+ * Idempotent v7 migration:
+ *  - introduce `price_list` / `price_list_item` tables;
+ *  - remove `price_kopecks` from `part`;
+ *  - add `price_kopecks` snapshot to `config_part` (backfilled from old
+ *    `part.price_kopecks` via join before the column is dropped);
+ *  - add `seller_id = 'usr-seller'` to `config` and `ready_pc`.
+ *
+ * All affected tables are rebuilt via the documented FK-off recipe
+ * (CREATE -> INSERT -> DROP -> RENAME) because STRICT SQLite cannot alter
+ * columns/constraints in place.
+ */
+export function migratePriceLists(db: Database.Database): void {
+  if (priceListsIsMigrated(db)) return;
+
+  const stamp = `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+  const tmpPart = `new_part_${stamp}`;
+  const tmpConfigPart = `new_config_part_${stamp}`;
+  const tmpConfig = `new_config_${stamp}`;
+  const tmpReady = `new_ready_pc_${stamp}`;
+
+  db.pragma("foreign_keys = OFF");
+  db.pragma("defer_foreign_keys = ON");
+  try {
+    db.transaction(() => {
+      // 1. Create price_list tables first (they reference part / user_account).
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS price_list (
+          price_list_id TEXT PRIMARY KEY,
+          seller_id     TEXT NOT NULL,
+          name          TEXT NOT NULL,
+          is_active     INTEGER NOT NULL DEFAULT 0 CHECK (is_active IN (0,1)),
+          created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+          UNIQUE (seller_id, name),
+          FOREIGN KEY (seller_id) REFERENCES user_account(user_id) ON DELETE CASCADE
+        ) STRICT
+      `);
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS price_list_item (
+          price_list_id TEXT NOT NULL,
+          part_id       TEXT,
+          price_kopecks INTEGER NOT NULL DEFAULT 0 CHECK (price_kopecks >= 0),
+          PRIMARY KEY (price_list_id, part_id),
+          FOREIGN KEY (price_list_id) REFERENCES price_list(price_list_id) ON DELETE CASCADE,
+          FOREIGN KEY (part_id) REFERENCES part(part_id) ON DELETE SET NULL
+        ) STRICT, WITHOUT ROWID
+      `);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_price_list_seller ON price_list(seller_id)`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_price_list_active ON price_list(seller_id, is_active)`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_price_list_item_part ON price_list_item(part_id)`);
+
+      // 2. Create the new `part` (without price_kopecks) BEFORE dropping the old
+      //    one, so the config_part snapshot can join the old price below.
+      db.exec(`
+        CREATE TABLE ${tmpPart} (
+          part_id       TEXT PRIMARY KEY,
+          category      TEXT NOT NULL CHECK (category IN ('cpu','gpu','motherboard','ram','storage','case','psu','cooler')),
+          name          TEXT NOT NULL,
+          brand         TEXT NOT NULL,
+          vendor_id     TEXT,
+          tdp_watt      INTEGER NOT NULL DEFAULT 0 CHECK (tdp_watt BETWEEN 0 AND 65355),
+          compat_json   TEXT NOT NULL,
+          specs_json    TEXT NOT NULL DEFAULT '[]',
+          image_url     TEXT,
+          is_active     INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0,1)),
+          is_available  INTEGER NOT NULL DEFAULT 1 CHECK (is_available IN (0,1)),
+          created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+          FOREIGN KEY (vendor_id) REFERENCES vendor(vendor_id) ON DELETE SET NULL
+        ) STRICT
+      `);
+      db.exec(`
+        INSERT INTO ${tmpPart} (part_id, category, name, brand, vendor_id, tdp_watt, compat_json, specs_json, image_url, is_active, is_available, created_at)
+        SELECT part_id, category, name, brand, vendor_id, tdp_watt,
+               compat_json, specs_json, image_url, is_active, is_available, created_at
+        FROM part
+      `);
+
+      // 3. Rebuild `config_part` with `price_kopecks` snapshot, backfilled from
+      //    the OLD part price (the current `part` still holds the column).
+      db.exec(`
+        CREATE TABLE ${tmpConfigPart} (
+          config_id     TEXT NOT NULL,
+          category      TEXT NOT NULL CHECK (category IN ('cpu','gpu','motherboard','ram','storage','case','psu','cooler')),
+          part_id       TEXT,
+          price_kopecks INTEGER NOT NULL DEFAULT 0 CHECK (price_kopecks >= 0),
+          PRIMARY KEY (config_id, category),
+          FOREIGN KEY (config_id) REFERENCES config(config_id) ON DELETE CASCADE,
+          FOREIGN KEY (part_id) REFERENCES ${tmpPart}(part_id) ON DELETE SET NULL
+        ) STRICT, WITHOUT ROWID
+      `);
+      db.exec(`
+        INSERT INTO ${tmpConfigPart} (config_id, category, part_id, price_kopecks)
+        SELECT cp.config_id, cp.category, cp.part_id,
+               COALESCE(p.price_kopecks, 0)
+        FROM config_part cp
+        LEFT JOIN part p ON p.part_id = cp.part_id
+      `);
+
+      // 4. Drop the old tables that will be replaced / already copied.
+      db.exec(`DROP TABLE part`);
+      db.exec(`DROP TABLE config_part`);
+
+      // 5. Rebuild `config` with `seller_id = 'usr-seller'`.
+      db.exec(`
+        CREATE TABLE ${tmpConfig} (
+          config_id  TEXT PRIMARY KEY,
+          user_id    TEXT NOT NULL,
+          name       TEXT NOT NULL DEFAULT 'Моя сборка',
+          source     TEXT NOT NULL DEFAULT 'custom' CHECK (source IN ('custom','auto','ready')),
+          usage      TEXT CHECK (usage IN ('gaming','work','video','universal')),
+          seller_id  TEXT,
+          created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+          updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+          FOREIGN KEY (user_id) REFERENCES user_account(user_id) ON DELETE CASCADE,
+          FOREIGN KEY (seller_id) REFERENCES user_account(user_id) ON DELETE SET NULL
+        ) STRICT
+      `);
+      db.exec(`
+        INSERT INTO ${tmpConfig} (config_id, user_id, name, source, usage, seller_id, created_at, updated_at)
+        SELECT config_id, user_id, name, source, usage, 'usr-seller', created_at, updated_at
+        FROM config
+      `);
+      db.exec(`DROP TABLE config`);
+
+      // 6. Rebuild `ready_pc` with `seller_id = 'usr-seller'`.
+      db.exec(`
+        CREATE TABLE ${tmpReady} (
+          ready_pc_id   TEXT PRIMARY KEY,
+          name          TEXT NOT NULL,
+          brand         TEXT NOT NULL,
+          usage         TEXT NOT NULL CHECK (usage IN ('gaming','work','video','universal')),
+          price_kopecks INTEGER NOT NULL CHECK (price_kopecks >= 0),
+          tdp_watt      INTEGER NOT NULL DEFAULT 0,
+          summary       TEXT NOT NULL,
+          specs_json    TEXT NOT NULL DEFAULT '[]',
+          image_url     TEXT,
+          in_stock      INTEGER NOT NULL DEFAULT 1 CHECK (in_stock IN (0,1)),
+          rating        REAL NOT NULL DEFAULT 5 CHECK (rating BETWEEN 0 AND 5),
+          is_active     INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0,1)),
+          seller_id     TEXT,
+          created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+          FOREIGN KEY (seller_id) REFERENCES user_account(user_id) ON DELETE SET NULL
+        ) STRICT
+      `);
+      db.exec(`
+        INSERT INTO ${tmpReady} (ready_pc_id, name, brand, usage, price_kopecks, tdp_watt, summary, specs_json, image_url, in_stock, rating, is_active, seller_id, created_at)
+        SELECT ready_pc_id, name, brand, usage, price_kopecks, tdp_watt, summary, specs_json, image_url, in_stock, rating, is_active, 'usr-seller', created_at
+        FROM ready_pc
+      `);
+      db.exec(`DROP TABLE ready_pc`);
+
+      // 7. Rename temp tables into place and restore part indexes.
+      db.exec(`ALTER TABLE ${tmpPart} RENAME TO part`);
+      db.exec(`ALTER TABLE ${tmpConfigPart} RENAME TO config_part`);
+      db.exec(`ALTER TABLE ${tmpConfig} RENAME TO config`);
+      db.exec(`ALTER TABLE ${tmpReady} RENAME TO ready_pc`);
+
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_part_active ON part(category, is_active)`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_ready_pc_usage ON ready_pc(usage)`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_ready_pc_price ON ready_pc(price_kopecks)`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_ready_pc_rating ON ready_pc(rating DESC)`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_config_user_id ON config(user_id)`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_config_updated ON config(updated_at DESC)`);
+    })();
+
+    const integrity = db.exec(`PRAGMA foreign_key_check;`) as unknown as [];
+    if (Array.isArray(integrity) && integrity.length > 0) {
+      throw new Error(
+        `price-lists migration left FK violations: ${JSON.stringify(integrity)}`,
       );
     }
   } finally {
