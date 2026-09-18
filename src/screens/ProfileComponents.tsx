@@ -201,6 +201,16 @@ export function ProfileComponents({ isAdmin }: { isAdmin: boolean }) {
     return map;
   }, [parts]);
 
+  const counts = useMemo(() => {
+    let active = 0;
+    let inactive = 0;
+    for (const p of parts) {
+      if (p.available) active += 1;
+      else inactive += 1;
+    }
+    return { active, inactive };
+  }, [parts]);
+
   const set = (key: keyof FormState, value: string) =>
     setForm((prev) => ({ ...prev, [key]: value }));
 
@@ -358,6 +368,12 @@ export function ProfileComponents({ isAdmin }: { isAdmin: boolean }) {
     <section aria-label="Компоненты" className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-lg font-semibold">Справочник компонентов</h2>
+        <div className="flex items-center gap-2">
+          <Badge variant="success">Активно: {counts.active}</Badge>
+          {showInactive ? (
+            <Badge variant="neutral">Деактивировано: {counts.inactive}</Badge>
+          ) : null}
+        </div>
         <div className="flex items-center gap-3">
           <div className="inline-flex items-center rounded-md border p-0.5" role="group" aria-label="Режим отображения">
             <Button
