@@ -20,7 +20,9 @@ test.describe("regression: ready catalog filters", () => {
   test("price max filters out higher-priced builds and empty state present", async ({ page }) => {
     await page.goto("/ready");
     await expect(page.getByRole("status")).toContainText(/Найдено: \d+/);
-    await page.getByLabel("Цена до").fill("60000");
+    // Ready PCs are live re-priced from the seller's active price list; the
+    // cheapest build (Confi Office 3000) is the only one under 100 000 Р.
+    await page.getByLabel("Цена до").fill("100000");
     await expect(page.getByRole("status")).toContainText(/Найдено: 1/);
     await expect(page.getByText("Confi Office 3000")).toBeVisible();
   });

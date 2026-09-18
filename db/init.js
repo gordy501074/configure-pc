@@ -1,14 +1,15 @@
-// Apply the Confi SQLite schema (empty STRICT tables, indexes, WAL, user_version=3).
+// Apply the Confi SQLite schema (empty STRICT tables, indexes, WAL, user_version=7).
 // Idempotent: re-running is safe.  Usage: npm run db:init
 //
 // The schema lives in db/schema.sql and is also applied by db/seed.js before seeding.
-// A dedicated migration (db/migrate.js) rebuilds user_account for the v3 role CHECK.
+// Migrations (db/migrate.ts) rebuild user_account, seller_brand, catalog/vendor
+// and price-list tables for the v3/v4/v6/v7 schema steps.
 
 import Database from "better-sqlite3";
 import { readFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { migrateSellerBrandDescription, migrateUserAccount, migrateVendorAndAvailability } from "./migrate.ts";
+import { migratePriceLists, migrateSellerBrandDescription, migrateUserAccount, migrateVendorAndAvailability } from "./migrate.ts";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const DB_PATH = join(root, "db", "confi.db");
@@ -23,6 +24,7 @@ db.exec(readFileSync(SCHEMA, "utf8"));
 migrateUserAccount(db);
 migrateSellerBrandDescription(db);
 migrateVendorAndAvailability(db);
+migratePriceLists(db);
 
 const tables = db
   .prepare("SELECT count(*) AS c FROM sqlite_master WHERE type='table'")

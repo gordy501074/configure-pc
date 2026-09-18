@@ -17,7 +17,7 @@ import {
 } from "../components/ui";
 import { ConfigPartsTable } from "../components/shared/ConfigPartsTable";
 import { cn } from "../lib/utils";
-import { configStats } from "../lib/compatibility";
+import { configStats, isPriceStale } from "../lib/compatibility";
 import { formatAgo, formatDate, formatPrice } from "../lib/format";
 import {
   addSellerBrand,
@@ -35,8 +35,9 @@ import { useAuth } from "../lib/auth";
 import type { Config, Order, Review, SellerBrand } from "../types";
 import Admin from "./Admin";
 import { ProfileComponents } from "./ProfileComponents";
+import { ProfilePriceLists } from "./ProfilePriceLists";
 
-type Tab = "configs" | "orders" | "reviews" | "admin-users" | "brands" | "components";
+type Tab = "configs" | "orders" | "reviews" | "admin-users" | "brands" | "components" | "price-lists";
 
 interface TabDef {
   key: Tab;
@@ -48,11 +49,13 @@ function tabsForRole(role: string): TabDef[] {
     return [
       { key: "admin-users", label: "Администрирование пользователей" },
       { key: "components", label: "Компоненты" },
+      { key: "price-lists", label: "Прайс-листы" },
     ];
   }
   if (role === "seller") {
     return [
       { key: "brands", label: "Бренды" },
+      { key: "price-lists", label: "Прайс-листы" },
       { key: "components", label: "Компоненты" },
     ];
   }
@@ -354,8 +357,16 @@ export default function Profile() {
                       <Badge variant="info">{sourceLabel(c.source)}</Badge>
                       <span className="font-medium">{formatPrice(s.totalPrice)}</span>
                       <span className="text-muted-foreground">{s.totalTdp} Вт</span>
+                      {c.source !== "ready" &&
+                      c.parts.some(
+                        (cp) =>
+                          cp.price !== undefined &&
+                          isPriceStale(cp.price, cp.currentPrice),
+                      ) ? (
+                        <Badge variant="warning">Цена может быть неактуальной</Badge>
+                      ) : null}
                     </div>
-                    <ConfigPartsTable parts={c.parts} />
+                    <ConfigPartsTable parts={c.parts} showStale={c.source !== "ready"} />
                     <div className="flex flex-wrap gap-2">
                       <Button
                         variant="secondary"
@@ -460,6 +471,8 @@ export default function Profile() {
         </section>
       ) : activeTab === "components" ? (
         <ProfileComponents isAdmin={user?.role === "admin"} />
+      ) : activeTab === "price-lists" ? (
+        <ProfilePriceLists sellerId={user.id} isAdmin={user?.role === "admin"} />
       ) : activeTab === "brands" ? (
         <section aria-label="Бренды" className="flex flex-col gap-4">
           <div className="flex flex-wrap items-center justify-between gap-2">

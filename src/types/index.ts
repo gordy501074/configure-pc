@@ -56,9 +56,12 @@ export interface Part {
   name: string;
   brand: string;
   vendorId?: string;
-  /** False when deactivated or unavailable-for-order. */
+  /** False when deactivated, unavailable-for-order, or lacks a positive price in the seller's active list. */
   available?: boolean;
-  price: number;
+  /** Present when the part has a price in the seller's active price list. */
+  price?: number;
+  /** True when this part has an explicit price list entry (even 0 = unavailable). */
+  priceSet?: boolean;
   specs: SpecItem[];
   /** In watts. */
   tdp: number;
@@ -68,12 +71,16 @@ export interface Part {
 }
 
 /** Why a config slot can't be ordered. */
-export type UnavailableReason = "deactivated" | "missing";
+export type UnavailableReason = "deactivated" | "missing" | "no_price";
 
 /** A slot in a config/ready PC. When `part` is null, the component is unavailable. */
 export interface ConfigPart {
   category: ComponentCategory;
   part: Part | null;
+  /** Snapshot price (custom/auto); for ready it's the live re-priced value. */
+  price?: number;
+  /** Current price from the seller's active list (custom/auto -5% comparison). */
+  currentPrice?: number;
   unavailableReason?: UnavailableReason;
 }
 
@@ -92,6 +99,7 @@ export interface Config {
   updatedAt: number;
   source: "custom" | "auto" | "ready";
   usage?: Usage;
+  sellerId?: string;
 }
 
 export interface ReadyPc {
@@ -166,6 +174,32 @@ export interface SurveyAnswers {
 export interface SellerBrand {
   brand: string;
   description?: string;
+}
+
+/** A seller account, for the catalog seller selector. */
+export interface SellerSummary {
+  id: string;
+  name: string;
+  company?: string;
+}
+
+/** A price-list item (a part with a price in rubles). */
+export interface PriceListItem {
+  partId: string;
+  /** Part display name (present when the part still exists). */
+  name?: string;
+  /** Part category (present when the part still exists). */
+  category?: ComponentCategory;
+  price: number;
+}
+
+/** A seller's price list (exactly one active per seller). */
+export interface PriceList {
+  id: string;
+  name: string;
+  isActive: boolean;
+  createdAt: number;
+  items: PriceListItem[];
 }
 
 /** Compatibility disallow reason. */

@@ -2,13 +2,14 @@
 // Node 24 native TS type-stripping imports the mock directly.
 //
 // Usage: npm run db:seed   (or: node db/seed.js)
+// Applies db/schema.sql (user_version=7) + db/migrate.ts before seeding.
 
 import Database from "better-sqlite3";
 import { readFileSync, appendFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { components, readyPcs, seededReviews } from "../src/data/mock.ts";
-import { migrateSellerBrandDescription, migrateUserAccount, migrateVendorAndAvailability } from "./migrate.ts";
+import { migratePriceLists, migrateSellerBrandDescription, migrateUserAccount, migrateVendorAndAvailability } from "./migrate.ts";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const DB_PATH = join(root, "db", "confi.db");
@@ -53,6 +54,7 @@ db.exec(readFileSync(SCHEMA, "utf8"));
 migrateUserAccount(db);
 migrateSellerBrandDescription(db);
 migrateVendorAndAvailability(db);
+migratePriceLists(db);
 
 /** Validate a single part row; returns null to skip. */
 function validatePart(p) {
@@ -69,7 +71,7 @@ function validatePart(p) {
     category: p.category,
     name: composeName(p.brand, brand),
     brand,
-    price_kopecks: Math.round(p.price * 100),
+    price_rubles: p.price,
     tdp_watt: Math.round(p.tdp),
   };
 }
@@ -102,14 +104,13 @@ const insertVendor = db.prepare(`
 `);
 
 const insertPart = db.prepare(`
-  INSERT INTO part (part_id, category, name, brand, vendor_id, price_kopecks, tdp_watt, compat_json, specs_json, image_url, is_active, is_available)
-  VALUES (@part_id, @category, @name, @brand, @vendor_id, @price_kopecks, @tdp_watt, @compat_json, @specs_json, @image_url, 1, 1)
+  INSERT INTO part (part_id, category, name, brand, vendor_id, tdp_watt, compat_json, specs_json, image_url, is_active, is_available)
+  VALUES (@part_id, @category, @name, @brand, @vendor_id, @tdp_watt, @compat_json, @specs_json, @image_url, 1, 1)
   ON CONFLICT(part_id) DO UPDATE SET
     category=excluded.category, name=excluded.name, brand=excluded.brand,
     vendor_id=excluded.vendor_id,
-    price_kopecks=excluded.price_kopecks, tdp_watt=excluded.tdp_watt,
-    compat_json=excluded.compat_json, specs_json=excluded.specs_json,
-    image_url=excluded.image_url, is_active=1, is_available=1
+    tdp_watt=excluded.tdp_watt, compat_json=excluded.compat_json,
+    specs_json=excluded.specs_json, image_url=excluded.image_url, is_active=1, is_available=1
 `);
 
 /** Ensure a vendor row exists for the brand, returning its real stored id. */
@@ -128,14 +129,27 @@ function ensureVendor(brand) {
 }
 
 const insertReady = db.prepare(`
-  INSERT INTO ready_pc (ready_pc_id, name, brand, usage, price_kopecks, tdp_watt, summary, specs_json, image_url, in_stock, rating, is_active)
-  VALUES (@id, @name, @brand, @usage, @price_kopecks, @tdp_watt, @summary, @specs_json, @image_url, @in_stock, @rating, 1)
+  INSERT INTO ready_pc (ready_pc_id, name, brand, usage, price_kopecks, tdp_watt, summary, specs_json, image_url, in_stock, rating, is_active, seller_id)
+  VALUES (@id, @name, @brand, @usage, @price_kopecks, @tdp_watt, @summary, @specs_json, @image_url, @in_stock, @rating, 1, @seller_id)
   ON CONFLICT(ready_pc_id) DO UPDATE SET
     name=excluded.name, brand=excluded.brand, usage=excluded.usage,
     price_kopecks=excluded.price_kopecks, tdp_watt=excluded.tdp_watt,
     summary=excluded.summary, specs_json=excluded.specs_json,
     image_url=excluded.image_url, in_stock=excluded.in_stock,
-    rating=excluded.rating, is_active=1
+    rating=excluded.rating, seller_id=excluded.seller_id, is_active=1
+`);
+
+const insertPriceList = db.prepare(`
+  INSERT INTO price_list (price_list_id, seller_id, name, is_active)
+  VALUES (@id, @seller_id, @name, @is_active)
+  ON CONFLICT(price_list_id) DO UPDATE SET
+    name=excluded.name, is_active=excluded.is_active
+`);
+
+const insertPriceListItem = db.prepare(`
+  INSERT INTO price_list_item (price_list_id, part_id, price_kopecks)
+  VALUES (@price_list_id, @part_id, @price_kopecks)
+  ON CONFLICT(price_list_id, part_id) DO UPDATE SET price_kopecks=excluded.price_kopecks
 `);
 
 const insertReadyPart = db.prepare(`
@@ -172,6 +186,7 @@ const seedAll = db.transaction(() => {
   // user rows (ON DELETE RESTRICT / CASCADE) are never triggered.
 
   let partCount = 0;
+  const partPrices = new Map();
   for (const cat of CATEGORIES) {
     for (const p of components[cat]) {
       const row = validatePart(p);
@@ -183,6 +198,7 @@ const seedAll = db.transaction(() => {
         specs_json: specsJson(p),
         image_url: p.image ?? null,
       });
+      partPrices.set(p.id, p.price);
       partCount += 1;
     }
   }
@@ -200,10 +216,26 @@ const seedAll = db.transaction(() => {
       image_url: rp.image ?? null,
       in_stock: rp.inStock ? 1 : 0,
       rating: rp.rating,
+      seller_id: "usr-seller",
     });
     for (const { category, part } of rp.parts) {
       insertReadyPart.run({ ready_pc_id: rp.id, part_id: part.id, category });
     }
+  }
+
+  // ConfiГУРА active price list "Основной" with all catalog parts at mock prices.
+  const PL = "pl-main";
+  insertPriceList.run({ id: PL, seller_id: "usr-seller", name: "Основной", is_active: 1 });
+  // Clear other active lists of the seller (idempotent re-seed).
+  db.prepare(`UPDATE price_list SET is_active=0 WHERE seller_id='usr-seller' AND price_list_id<>?`).run(PL);
+  let priceItemCount = 0;
+  for (const [partId, price] of partPrices) {
+    insertPriceListItem.run({
+      price_list_id: PL,
+      part_id: partId,
+      price_kopecks: Math.round(Number(price) * 100),
+    });
+    priceItemCount += 1;
   }
 
   for (const r of seededReviews) {
@@ -232,7 +264,7 @@ const seedAll = db.transaction(() => {
     email: "user@company.com",
     phone: null,
     role: "seller",
-    company: "Confi Маркет",
+    company: "ConfiГУРУ",
   });
   insertSellerBrand.run({
     seller_id: "usr-seller",
@@ -244,14 +276,14 @@ const seedAll = db.transaction(() => {
   // created as vendors by earlier buggy seeds, or leftovers from deleted parts).
   db.exec(`DELETE FROM vendor WHERE vendor_id NOT IN (SELECT vendor_id FROM part WHERE vendor_id IS NOT NULL)`);
 
-  return partCount;
+  return { partCount, priceItemCount };
 });
 
-const inserted = seedAll();
+const seeded = seedAll();
 
-const counts = db.prepare("SELECT (SELECT count(*) FROM part) AS parts, (SELECT count(*) FROM ready_pc) AS ready, (SELECT count(*) FROM ready_pc_part) AS ready_parts, (SELECT count(*) FROM review) AS reviews").get();
+const counts = db.prepare("SELECT (SELECT count(*) FROM part) AS parts, (SELECT count(*) FROM ready_pc) AS ready, (SELECT count(*) FROM ready_pc_part) AS ready_parts, (SELECT count(*) FROM review) AS reviews, (SELECT count(*) FROM price_list) AS price_lists, (SELECT count(*) FROM price_list_item) AS price_items").get();
 // eslint-disable-next-line no-console
 console.log("Seed complete.");
 // eslint-disable-next-line no-console
-console.log({ inserted, ...counts, quarantined });
+console.log({ inserted: seeded.partCount, ...counts, seedPriceItems: seeded.priceItemCount, quarantined });
 db.close();

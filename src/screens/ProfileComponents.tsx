@@ -34,6 +34,8 @@ import {
   useToast,
 } from "../components/ui";
 import { CATEGORY_LABELS } from "../lib/format";
+import { useSort } from "../lib/useSort";
+import { SortableTh } from "../components/ui/SortableTh";
 import {
   createPart,
   deactivatePart,
@@ -210,6 +212,19 @@ export function ProfileComponents({ isAdmin }: { isAdmin: boolean }) {
     }
     return { active, inactive };
   }, [parts]);
+
+  // Sort each category's part list by the active column (per-group, keeping the
+  // category section rows intact).
+  const { sort, toggle, sorted } = useSort();
+  const sortGroup = (list: Part[]): Part[] =>
+    sorted(list, (p: Part) => {
+      switch (sort?.key) {
+        case "name": return p.name;
+        case "tdp": return p.tdp;
+        case "features": return compatSummary(p.category, p) || "";
+        default: return p.name;
+      }
+    });
 
   const set = (key: keyof FormState, value: string) =>
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -483,14 +498,13 @@ export function ProfileComponents({ isAdmin }: { isAdmin: boolean }) {
             })
           ) : (
             <Card className="gap-3 p-4">
-              <h3 className="text-base font-semibold">Справочник компонентов</h3>
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Компонент</TableHead>
-                    <TableHead className="text-left">Категория</TableHead>
-                    <TableHead>TDP</TableHead>
-                    <TableHead>Особенности</TableHead>
+                    <SortableTh label="Компонент" column="name" sort={sort} onSort={toggle} />
+                    <SortableTh label="Категория" column="category" sort={sort} onSort={toggle} />
+                    <SortableTh label="TDP" column="tdp" sort={sort} onSort={toggle} />
+                    <SortableTh label="Особенности" column="features" sort={sort} onSort={toggle} />
                     <TableHead className="text-right">Действия</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -505,7 +519,7 @@ export function ProfileComponents({ isAdmin }: { isAdmin: boolean }) {
                             {CATEGORY_LABELS[cat]}
                           </TableCell>
                         </TableRow>
-                        {list.map((p) => (
+                        {sortGroup(list).map((p) => (
                           <TableRow key={p.id}>
                             <TableCell>
                               <div className="flex min-w-0 flex-col">

@@ -12,7 +12,6 @@ import {
   Table,
   TableBody,
   TableCell,
-  TableHead,
   TableHeader,
   TableRow,
   useToast,
@@ -24,7 +23,10 @@ import { fetchReadyPc, fetchReviews } from "../lib/api";
 import { formatPrice, USAGE_LABELS, formatAgo } from "../lib/format";
 import { saveConfigAction, shareAction, listReviews } from "../lib/actions";
 import { useAuth } from "../lib/auth";
+import { useSeller } from "../lib/useSeller";
 import { configStats } from "../lib/compatibility";
+import { useSort } from "../lib/useSort";
+import { SortableTh } from "../components/ui/SortableTh";
 import { uid } from "../lib/session";
 import type { ReadyPc, Review } from "../types";
 
@@ -33,16 +35,25 @@ export default function PcCard() {
   const navigate = useNavigate();
   const { toast } = useToast();
   const { user, isCustomer } = useAuth();
+  const { sellerId } = useSeller();
   const [loadState, setLoadState] = useState<"loading" | "done">("loading");
   const [pc, setPc] = useState<ReadyPc | null>(null);
   const [reviews, setReviews] = useState<Review[]>([]);
   const [reviewOpen, setReviewOpen] = useState(false);
+  const { sort, toggle, sorted } = useSort();
+
+  const sortedSpecs = pc
+    ? sorted(pc.specs, (s: { label: string; value: string }) =>
+        sort?.key === "value" ? s.value : s.label,
+      )
+    : [];
 
   useEffect(() => {
     if (!id) return;
     let cancelled = false;
     setLoadState("loading");
-    Promise.all([fetchReadyPc(id), listReviews(id)]).then(([ready, revs]) => {
+    setPc(null);
+    Promise.all([fetchReadyPc(id, sellerId), listReviews(id)]).then(([ready, revs]) => {
       if (cancelled) return;
       if (ready) setPc(ready);
       setReviews(revs);
@@ -51,7 +62,7 @@ export default function PcCard() {
     return () => {
       cancelled = true;
     };
-  }, [id]);
+  }, [id, sellerId]);
 
   useEffect(() => {
     if (!id || loadState !== "done") return;
@@ -133,6 +144,7 @@ export default function PcCard() {
         updatedAt: Date.now(),
         source: "ready",
         usage: pc.usage,
+        sellerId,
       },
       user.id,
     );
@@ -184,12 +196,12 @@ export default function PcCard() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Параметр</TableHead>
-                  <TableHead>Значение</TableHead>
+                  <SortableTh label="Параметр" column="param" sort={sort} onSort={toggle} />
+                  <SortableTh label="Значение" column="value" sort={sort} onSort={toggle} />
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {pc.specs.map((s) => (
+                {sortedSpecs.map((s) => (
                   <TableRow key={s.label}>
                     <TableCell>{s.label}</TableCell>
                     <TableCell>{s.value}</TableCell>

@@ -16,7 +16,10 @@
 - **Сохранение и хранение сборок** — сохранение, загрузка, копирование в конфигуратор и удаление конфигураций в профиле.
 - **Оформление заказа** — детализация состава, итоговая сумма и оформление покупки, попадание в историю заказов.
 - **Рассрочка 0-0-4 от Альфа-Банка** — кликабельный блок «Купить в рассрочку на 4 месяца» с визуальным разбиением суммы на 4 равные части (первый платёж — со следующего месяца). Ведёт на отдельную форму `/alpha` в красных тонах с атрибутикой Альфа-Банка и кнопкой «Отправить заявку на покупку в рассрочку». Такие заявки получают статус «На рассмотрении в Альфа-Банке».
-- **Ролевая модель** — четыре роли: **Гость** (аноним: публичные страницы, конфигуратор и автоподбор без сохранения), **Клиент** (email+телефон, вход по email или SMS, профиль с конфигурациями/заказами/отзывами), **Продавец** (только email, поле «Компания», вкладка «Бренды» с CRUD и описанием бренда, плейсхолдер «Прайс-лист — в разработке») и **Администратор** (только email, управление пользователями в профиле и на `/admin`). **admin/seller не могут покупать** (заказ и рассрочка), **сохранять сборки и оставлять отзывы** — у них нет вкладок «Заказы», «Отзывы», «Конфигурации» и «Настройки». Бренд **Confi** закреплён за `user@company.com` (с описанием «Собственные сборки Confi»), админ — `avgordeev@alfabank.ru`.
+- **Ролевая модель** — четыре роли: **Гость** (аноним: публичные страницы, конфигуратор и автоподбор без сохранения), **Клиент** (email+телефон, вход по email или SMS, профиль с конфигурациями/заказами/отзывами), **Продавец** (только email, поле «Компания», вкладки «Бренды», «Прайс-листы» и «Компоненты») и **Администратор** (только email, управление пользователями в профиле и на `/admin`, вкладка «Прайс-листы» со всеми прайсами всех продавцов). **admin/seller не могут покупать** (заказ и рассрочка), **сохранять сборки и оставлять отзывы** — у них нет вкладок «Заказы», «Отзывы», «Конфигурации» и «Настройки». Продавец Confi — `user@company.com`, компания «ConfiГУРУ», бренд **Confi** (описание «Собственные сборки Confi»); админ — `avgordeev@alfabank.ru`.
+- **Прайс-листы продавцов** — у каждого продавца собственные прайс-листы (`price_list` / `price_list_item`), активен ровно один. На вкладке «Прайс-листы» (продавец или админ — с указанием продавца для каждого прайса) можно создать/переименовать/активировать/удалить прайс, добавлять отдельные компоненты из справочника и **мультивыбор «Добавить компоненты из справочника»** (чек-боксы + «Добавить все»; добавленные получают цену 0 = недоступно). Цена 0/отсутствие в активном прайсе = «недоступен для заказа». Дата создания и количество позиций выводятся в списке прайсов.
+- **Цены и продавец по умолчанию** — цена полностью убрана из каталога `part`; все цены живут только в позициях прайс-листов. На страницах каталога («Готовые ПК», «Конфигуратор», «Автоподбор») есть **селектор продавца** (по умолчанию ConfiГУРА — `usr-seller`); сервер подставляет цену из активного прайса выбранного продавца. Готовые ПК привязаны к продавцу через `ready_pc.seller_id` и **пересчитываются по активному прайсу** (не фиксированной ценой). Для сохранённых кастомных/auto-конфигураций хранится **снимок цены** (`config_part.price_kopecks`), и при просмотре в профиле сравнивается с актуальной ценой: если различие **по модулю > 5%** — бейдж **«Цена может быть неактуальной»** у компонента и всей сборки; готовые сборки в профиле всегда живые (переоценка без снимка).
+- **Сортировка в таблицах** — во всех табличных формах (пользователи, компоненты, прайс-листы, состав конфигурации, характеристики) заголовки колонок кликабельны: сортировка по возрастанию/убыванию (третий клик сбрасывает). Колонка «Действия» не сортируется.
 - **Профиль и авторизация** — вход по телефону (мок-SMS) или по e-mail; самообслуживание аккаунта (клиент и продавец редактируют имя, продавец — «Компанию»). Вкладки зависят от роли: **Клиент** — «Конфигурации / Заказы / Отзывы»; **Администратор** — «Администрирование пользователей» и «Компоненты»; **Продавец** — «Бренды» и «Компоненты». В разделе «Заказы» для любого заказа, кроме «Выполнен», доступна кнопка «Отменить», удаляющая заказ из хранилища.
 - **Отзывы и рейтинги** — оставление отзывов к готовым сборкам и к кастомному конфигуратору (только для `customer`).
 - **Темы оформления** — светлая и тёмная тема (oklch-токены); настройка темы и уведомлений вынесена в шестерёнку **«Настройки»** в правом верхнем углу хэдера (только для авторизованных; у гостя остаются только переключатель темы и кнопка входа).
@@ -45,9 +48,9 @@
 src/
 ├── components/
 │   ├── shared/        # Композитные компоненты (ComponentPicker, ConfigPartsTable,
-│   │                  #   ReadyPcCard, ReviewDialog, InstallmentPlan)
+│   │                  #   ReadyPcCard, ReviewDialog, InstallmentPlan, SellerPicker)
 │   └── ui/            # shadcn/ui-подобные примитивы (Button, Card, Dialog, Select,
-│                      #   Modal, Navbar, Table, Badge, StarRating, Breadcrumbs,
+│                      #   Modal, Navbar, Table, SortableTh, Badge, StarRating, Breadcrumbs,
 │                      #   EmptyState, Field, Tabs, Switch, Skeleton, Toast …)
 ├── data/
 │   └── mock.ts        # Источник для seed каталога/готовых ПК/отзывов (не используется фронтендом)
@@ -59,12 +62,14 @@ src/
 │   ├── api.ts         # Клиентский API-слой (fetch к /api, маппинг DTO ↔ domain)
 │   ├── actions.ts     # Действия: сохранение/удаление сборок, шеринг, отзывы
 │   ├── session.ts     # Хранение opaque-идентификатора сессии в куке, генерация uid
+│   ├── useSort.ts     # Хук сортировки таблиц (toggle направления, стабильный comparator)
+│   ├── useSeller.ts   # Хук выбора продавца (по умолчанию ConfiГУРА / usr-seller)
 │   ├── format.ts      # Форматирование цен, ватт, дат, телефонов, меток категорий
 │   └── utils.ts       # cn() — слияние CSS-классов
 ├── screens/           # Экраны (Home, Onboarding, Auth, ReadyPCs, PcCard,
 │                      #   CustomConfig, AutoSelect, AutoResult, Checkout,
 │                      #   InstallmentCheckout, Profile, ProfileComponents,
-│                      #   Admin, NotFound, Layout)
+│                      #   ProfilePriceLists, Admin, NotFound, Layout)
 │   └── guards.tsx     # Гейты доступа: RequireAuth / RequireRole / RequireCustomer
 ├── styles/
 │   └── global.css     # Tailwind v4 + oklch-дизайн-токены + базовые стили
@@ -73,7 +78,7 @@ src/
 ├── server/            # Express + SQLite API (не входит в клиентскую сборку)
 │   ├── index.ts       # Корень API: маршруты каталога, пользователей, авторизации, админки
 │   ├── db.ts          # Открытие/кэширование SQLite-подключения (WAL, FK + миграция)
-│   └── repository/    # DAO (catalog, user-data, seller, vendor, app-state) + типы DTO
+│   └── repository/    # DAO (catalog, user-data, seller, vendor, price-list, app-state) + типы DTO
 ├── App.tsx            # Корневой компонент с провайдерами
 ├── router.tsx         # Конфигурация маршрутов (lazy + Suspense, гейты доступа)
 └── main.tsx           # Точка входа (createRoot + StrictMode)
@@ -92,7 +97,7 @@ src/
 | `/auto` | Автоподбор (опрос) |
 | `/auto/result` | Результат автоподбора |
 | `/profile` | Профиль (по умолчанию первый раздел роли) — только авторизованные |
-| `/profile/:tab` | Профиль: клиент — `configs` / `orders` / `reviews`; админ — `admin-users` / `components`; продавец — `brands` / `components` — только авторизованные |
+| `/profile/:tab` | Профиль: клиент — `configs` / `orders` / `reviews`; админ — `admin-users` / `components` / `price-lists`; продавец — `brands` / `price-lists` / `components` — только авторизованные |
 | `/checkout` | Оформление заказа — только `customer` |
 | `/alpha` | Рассрочка 0-0-4 от Альфа-Банка — только `customer` |
 | `/admin` | Администрирование пользователей — только роль `admin` |
@@ -115,7 +120,7 @@ API через Vite-прокси `/api → http://localhost:8787`.
 
 | Команда | Действие |
 | --- | --- |
-| `npm run db:init` | Создать `db/confi.db` со схемой + миграцией (идемпотентно, `user_version=6`) |
+| `npm run db:init` | Создать `db/confi.db` со схемой + миграцией (идемпотентно, `user_version=7`) |
 | `npm run db:seed` | Seed каталога/готовых ПК/отзывов/ролей из `src/data/mock.ts` (пересоздаёт каталог) |
 | `npm run db:import <export.json>` | Импорт данных из устаревшего localStorage-экспорта `alfagen:` (батчинг, quarantine) |
 | `npm run db:backup` | Резервная копия `db/confi.db` в `db/backups/` |
@@ -128,7 +133,7 @@ API через Vite-прокси `/api → http://localhost:8787`.
 `src/data/mock.ts` напрямую (Node 24 native type-stripping), валидирует каждую
 запись и пишет битые строки в `db/quarantine-*.log`.
 
-**Миграция схемы:** `db/schema.sql` — источник DDL (`user_version=6`). В `db/migrate.ts`
+**Миграция схемы:** `db/schema.sql` — источник DDL (`user_version=7`). В `db/migrate.ts`
 — идемпотентные миграции:
 - `migrateUserAccount` — пересоздание `user_account` с новым CHECK роли
   (`'guest'` убрана, добавлены `seller`/`admin`) и колонкой `company`
@@ -142,15 +147,23 @@ API через Vite-прокси `/api → http://localhost:8787`.
   заполняются из уникальных `brand` (Intel/AMD/NVIDIA/…); `is_available=1` для всех.
   Таблицы пересоздаются по рецепту FK-off + temp `CREATE/INSERT/DROP/RENAME` с
   `PRAGMA foreign_key_check`.
+- `migratePriceLists` (v7) — вводит таблицы `price_list` / `price_list_item`,
+  полностью убирает `price_kopecks` из `part`, добавляет **снимок цены**
+  `config_part.price_kopecks` (заполняется JOIN-ом из старой `part.price_kopecks` до
+  удаления колонки) и `seller_id` в `config` / `ready_pc` (все существующие строки →
+  `usr-seller`). Пересоздаёт `part`/`config_part`/`config`/`ready_pc` по рецепту FK-off.
 
-Все три миграции вызываются из `db:init`, `db:seed`, `src/server/db.ts` и тестовой инициализации.
+Все миграции вызываются из `db:init`, `db:seed`, `src/server/db.ts` и тестовой инициализации.
 
 ### API
 
-- `GET /api/parts[?category=]` — каталог компонентов (маркеры совместимости — вложенный документ
-  `part.compat`); `?includeInactive=1` возвращает и деактивированные (только `seller`/`admin`)
-- `GET /api/parts/:id` — один активный компонент
-- `GET /api/ready`, `GET /api/ready/:id` — готовые ПК
+- `GET /api/parts[?category=][&sellerId=]` — каталог компонентов (маркеры совместимости — вложенный документ
+  `part.compat`); `?includeInactive=1` возвращает и деактивированные (только `seller`/`admin`);
+  при `sellerId` к деталям подставляются цены из активного прайс-листа продавца
+- `GET /api/parts/:id[?sellerId=]` — один активный компонент (с ценой прайса при `sellerId`)
+- `GET /api/ready[?sellerId=]`, `GET /api/ready/:id[?sellerId=]` — готовые ПК выбранного продавца,
+  пересчитанные по его активному прайс-листу (сумма цен состава)
+- `GET /api/sellers` — список продавцов (id, name, company) для селектора каталога
 - `GET /api/vendors` — список вендоров (торговых марок)
 - `POST /api/components` — создать компонент (роль `seller`/`admin`; `vendor` — название, upsert в `vendor`)
 - `PATCH /api/components/:id` — редактирование компонента (seller/admin)
@@ -163,7 +176,17 @@ API через Vite-прокси `/api → http://localhost:8787`.
 - `PATCH /api/profile` — самообслуживание аккаунта (имя; продавец также может менять `company`) — только авторизованные
 - `GET /api/users`, `POST /api/users`, `DELETE /api/users/:id`, `PATCH /api/users/:id/role` — управление пользователями (только `admin`; дубль e-mail → `409`)
 - `GET/PUT/PATCH/DELETE /api/seller/:id/brands` — бренды продавца (владелец или `admin`): список, создание, обновление (переименование/описание), удаление; `GET` возвращает `{ brand, description }[]`
-- `GET/PUT/DELETE /api/configs[/:id]` — сборки (`?userId=`; запись — только `customer`)
+- Прайс-листы продавца (владелец или `admin`):
+  - `GET /api/seller/:id/price-lists` — список прайсов продавца (с позициями, названием и датой создания)
+  - `POST /api/seller/:id/price-lists` — создать (`{ name }`; первый прайс продавца становится активным)
+  - `PATCH /api/seller/:id/price-lists/:listId` — переименовать (`{ name }`)
+  - `DELETE /api/seller/:id/price-lists/:listId` — удалить (при удалении активного активируется самый свежий)
+  - `POST /api/seller/:id/price-lists/:listId/activate` — сделать прайс активным (снимает активность у прочих)
+  - `PUT /api/seller/:id/price-lists/:listId/items/:partId` — задать цену позиции (`{ price }`)
+  - `DELETE /api/seller/:id/price-lists/:listId/items/:partId` — удалить позицию
+  - `GET /api/seller/:id/price-lists/:listId/items/missing[?includeInactive=]` — отсутствующие в прайсе детали (мультивыбор)
+  - `POST /api/seller/:id/price-lists/:listId/items/bulk` — массовое добавление выбранных (`{ partIds }`, цена 0)
+- `GET/PUT/DELETE /api/configs[/:id]` — сборки (`?userId=`; запись — только `customer`); кастом/auto возвращают снимок цены + актуальную (`price`/`currentPrice`), ready — живые цены
 - `GET/PUT/DELETE /api/orders[/:id]` — заказы (запись — только `customer`)
 - `GET/PUT /api/reviews[/:id]` (`?entityId=`) — отзывы (запись — только `customer`)
 - `GET/PATCH /api/settings` — настройки
@@ -190,9 +213,17 @@ config, order, review, user, seller, vendor, app-state). Браузерная ч
 Вся бизнес-логика и данные живут в SQLite. На клиенте от локального хранилища
 данных осталась только кука `confi_session` с opaque-идентификатором сессии,
 чтобы переживать перезагрузку страницы; сами сессии, пользователи, конфигурации,
-заказы, отзывы, настройки, pending-SMS-коды, бренды продавцов и флаг онбординга
+заказы, отзывы, настройки, pending-SMS-коды, бренды продавцов, прайс-листы и флаг онбординга
 хранятся в БД (таблицы `user_account`, `auth_session`, `auth_pending`, `config`,
-`order_header`, `review`, `app_setting`, `seller_brand`, `vendor`, `kv_store`).
+`config_part`, `order_header`, `order_item`, `review`, `app_setting`, `seller_brand`,
+`vendor`, `price_list`, `price_list_item`, `kv_store`).
+
+**Цена в прайс-листах:** у `part` нет колонки цены — все цены находятся в
+`price_list_item.price_kopecks` активного прайс-листа продавца. Цена 0/отсутствие =
+«недоступен для заказа». У сохранённых кастомных/auto-конфигураций хранится
+**снимок цены** в `config_part.price_kopecks` (сравнивается с актуальной по правилу
+±5%); `config.seller_id` и `ready_pc.seller_id` указывают на продавца, из прайса которого
+собрана/привязана сборка (по умолчанию ConfiГУРА — `usr-seller`).
 
 **Роли:** колонка `user_account.role` — `'customer' | 'seller' | 'admin'` (плюс
 аноним вне записей = «Гость»). У клиента есть и e-mail, и телефон; у продавца и
@@ -250,9 +281,9 @@ config, order, review, user, seller, vendor, app-state). Браузерная ч
   ролям на основе сессии (`actorRole`).
 - Клиент: helper-флаги ролей в `auth.tsx`, гейты `RequireAuth`/`RequireRole`
   (`src/screens/guards.tsx`), маршрут `/admin`, экран `Admin.tsx`, обновлены
-  `Navbar`/`Auth`/`Profile` (бейдж роли, поля «Компания» и «Прайс-лист — в разработке»).
+  `Navbar`/`Auth`/`Profile` (бейдж роли, поля «Компания» и «Прайс-листы»).
 - Seed добавляет админа (`avgordeev@alfabank.ru`, `admin`) и продавца
-  (`user@company.com`, `seller`, компания «Confi Маркет», бренд `Confi`).
+  (`user@company.com`, `seller`, компания «ConfiГУРУ», бренд `Confi`).
 
 ### admin/seller не сохраняют контент и не покупают + ролевые вкладки профиля + настройки в хэдере
 
@@ -385,6 +416,68 @@ config, order, review, user, seller, vendor, app-state). Браузерная ч
   «Активно: N» и (при включённом показе деактивированных) «Деактивировано: M». Счётчик
   деактивированных скрыт, когда показ деактивированных выключен, т.к. данных о них нет.
 
+### Прайс-листы продавцов, цены из прайса и выбор продавца
+
+- **Схема `db/schema.sql` → `user_version=7`.** Новые таблицы `price_list` (id, seller_id,
+  name, is_active, created_at; уникальность `(seller_id, name)`) и `price_list_item`
+  (price_list_id, part_id, price_kopecks; PK `(price_list_id, part_id)`). Из `part`
+  **полностью удалён `price_kopecks`** — все цены живут только в позициях прайс-листов.
+  В `config_part` добавлен **снимок цены** `price_kopecks` (для кастом/auto), в `config`
+  и `ready_pc` — колонка `seller_id`.
+- **Миграция `migratePriceLists`** пересоздаёт `price_list`/`price_list_item`/`part`/
+  `config_part`/`config`/`ready_pc` по рецепту FK-off; снимок `config_part.price_kopecks`
+  заполняется JOIN-ом из старой `part.price_kopecks` до удаления колонки; существующим
+  `config`/`ready_pc` проставляется `seller_id = 'usr-seller'` (перенос готовых ПК ConfiГУРЕ).
+  Вызывается из `db:init`, `db:seed`, `src/server/db.ts`, `tests/helpers/testDb.ts`.
+- **Репозиторий `price-list.ts`** (`PriceListRepository`): CRUD прайсов (первый → активный;
+  удаление активного активирует самый свежий), `setActivePriceList` (транзакцией снимает
+  активность с прочих), `upsertItem`/`deleteItem`, `listMissingItems`/`addItems` (мультивыбор,
+  добавление с ценой 0), `priceFor`/`activePriceListId` (резолв цен). `catalog.ts`:
+  `attachPrices` подставляет цену из активного прайса; `part` без цены/с ценой 0 →
+  `available=false`. `listReadyPcs`/`getReadyPc` фильтруют по `sellerId` и **пересчитывают
+  цену готового ПК** как сумму цен состава из активного прайса. `configPartsFor` для
+  `source='custom'|'auto'` возвращает и снимок (`price`), и актуальную цену (`currentPrice`)
+  для пометки ±5%; для `'ready'` — живые цены.
+- **API:** `GET /api/sellers` (список продавцов для селектора); `GET /api/parts`,
+  `GET /api/parts/:id`, `GET /api/ready`, `GET /api/ready/:id` принимают `?sellerId=`;
+  маршруты прайс-листов `GET/POST /api/seller/:id/price-lists`, `PATCH/DELETE …/:listId`,
+  `POST …/:listId/activate`, `PUT/DELETE …/items/:partId`,
+  `GET …/items/missing[?includeInactive=]`, `POST …/items/bulk` (владелец или `admin`).
+  `CreatePartInput`/`UpdatePartInput` и `createPart`/`updatePart`/`initializeCatalog`
+  освобождены от цены.
+- **Клиент (типы и логика):** `Part.price` стал опциональным + `priceSet`; `ConfigPart`
+  получил `price`/`currentPrice`; `Config`/`ReadyPc` — `sellerId`; новые типы `PriceList`,
+  `PriceListItem`, `SellerSummary`. Чистая функция `isPriceStale(snapshot, current)` —
+  `|разница| / current > 0.05` (покрыта юнит-тестами). `api.ts` — `fetchSellerSummaries`,
+  `fetchParts/fetchReadyPcs/fetchReadyPc/fetchCatalog` с `sellerId`, CRUD прайс-листов.
+- **Селектор продавца.** Новые `src/lib/useSeller.ts` и `src/components/shared/SellerPicker.tsx`
+  (по умолчанию ConfiГУРА — `usr-seller`, показывает «Компанию» продавца). Селектор выведен
+  на страницах «Готовые ПК», «Конфигуратор» и в результатах автоподбора; `sellerId` прокидывается
+  во все запросы цен и в сохраняемую конфигурацию. Готовые сборки в профиле переоцениваются
+  по активному прайсу `config.seller_id`; кастом/auto сравнивают снимок с актуальной ценой и
+  показывают бейдж «Цена может быть неактуальной» при отклонении >5%.
+- **Вкладка «Прайс-листы» (`ProfilePriceLists.tsx`).** У продавца управление своими прайсами
+  (создать/переименовать/активировать/удалить, добавить компонент, мультивыбор «Добавить
+  компоненты из справочника» с чек-боксами и «Добавить все», редактирование цены). У
+  администратора — прайсы **всех продавцов** с указанием продавца (Имя + Компания) и выбором
+  продавца при создании. В списке прайсов — дата создания и число позиций; в таблице позиций —
+  колонки «Код компонента», «Название компонента», «Категория», «Цена»; действия с позицией —
+  иконки карандаша/корзины с тултипами.
+- **Сортировка в таблицах.** Многоразовые `src/lib/useSort.ts` (hook) и
+  `src/components/ui/SortableTh.tsx` (кликабельный заголовок со стрелкой направления).
+  Сортировка подключена во все табличные формы: пользователи (admin), компоненты
+  (справочник), позиции прайс-листов, состав конфигурации, характеристики готового ПК.
+  Колонка «Действия» не сортируется.
+- **Seed.** ConfiГУРЕ (`usr-seller`) создаётся активный прайс-лист «Основной» со **всеми**
+  деталями каталога по ценам из `mock.ts`; компания продавца — «ConfiГУРУ». Готовые ПК
+  привязаны к `usr-seller`. `db/verify.sql` обновлён под v7 (прайс-листы, `seller_id`;
+  убран `part.price_kopecks`).
+- **Тесты.** Юнит: `isPriceStale` (+ обновлены `isConfigComplete` под `priceSet`). E2E
+  `tests/regression/price-lists.spec.ts` — CRUD/активация прайса, мультивыбор «Добавить все»,
+  цена 0/отсутствие = недоступно, бейдж «Цена может быть неактуальной» (>5%), живые цены
+  готовой сборки в профиле. `ready-filters.spec.ts` обновлён под живую переоценку готовых.
+  `testDb.ts` сидит активный прайс-лист ConfiГУРЕ со всеми деталями.
+
 ## Автотесты и покрытие (процесс разработки)
 
 Автотесты должны покрывать **100% функционала**. Это достигается двумя
@@ -497,7 +590,7 @@ npm run preview
 | `npm run typecheck` | Проверка типов клиента и сервера |
 | `npm run server` | Запуск SQLite API-сервера (`http://localhost:8787`) |
 | `npm run server:dev` | Запуск SQLite API-сервера в watch-режиме |
-| `npm run db:init` | Создание схемы БД + миграция (`user_version=6`) |
+| `npm run db:init` | Создание схемы БД + миграция (`user_version=7`) |
 | `npm run db:seed` | Seed каталога/ролей из `mock.ts` |
 | `npm run db:import` | Импорт из localStorage-экспорта |
 | `npm run db:backup` | Бэкап `confi.db` |

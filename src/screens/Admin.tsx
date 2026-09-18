@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import {
@@ -25,6 +25,8 @@ import {
 import { createUser, deleteUser, fetchUsers, setUserRole } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { formatDate } from "../lib/format";
+import { useSort } from "../lib/useSort";
+import { SortableTh } from "../components/ui/SortableTh";
 import type { User, UserRole } from "../types";
 
 const ROLE_LABELS: Record<UserRole, string> = {
@@ -32,6 +34,11 @@ const ROLE_LABELS: Record<UserRole, string> = {
   seller: "Продавец",
   admin: "Администратор",
 };
+
+function contactLabel(u: User): string {
+  if (u.role === "customer") return [u.email, u.phone].filter(Boolean).join(" · ") || "—";
+  return u.email ?? "—";
+}
 
 interface CreateForm {
   name: string;
@@ -53,6 +60,23 @@ export default function Admin({ embedded = false }: { embedded?: boolean }) {
   const [showCreate, setShowCreate] = useState(false);
   const [form, setForm] = useState<CreateForm>(emptyForm);
   const [creating, setCreating] = useState(false);
+  const { sort, toggle, sorted } = useSort();
+
+  const sortedUsers = useMemo(
+    () =>
+      sorted(users, (u: User) => {
+        switch (sort?.key) {
+          case "name": return u.name;
+          case "role": return ROLE_LABELS[u.role];
+          case "contact": return contactLabel(u);
+          case "company": return u.company ?? "";
+          case "createdAt": return u.createdAt;
+          default: return u.name;
+        }
+      }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [users, sort],
+  );
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -138,11 +162,6 @@ export default function Admin({ embedded = false }: { embedded?: boolean }) {
     }
   };
 
-  const contactLabel = (u: User) => {
-    if (u.role === "customer") return [u.email, u.phone].filter(Boolean).join(" · ") || "—";
-    return u.email ?? "—";
-  };
-
   return (
     <div className={embedded ? "" : "container"}>
       {!embedded ? (
@@ -166,16 +185,16 @@ export default function Admin({ embedded = false }: { embedded?: boolean }) {
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>Имя</TableHead>
-              <TableHead>Роль</TableHead>
-              <TableHead>Контакт</TableHead>
-              <TableHead>Компания</TableHead>
-              <TableHead>Создан</TableHead>
+              <SortableTh label="Имя" column="name" sort={sort} onSort={toggle} />
+              <SortableTh label="Роль" column="role" sort={sort} onSort={toggle} />
+              <SortableTh label="Контакт" column="contact" sort={sort} onSort={toggle} />
+              <SortableTh label="Компания" column="company" sort={sort} onSort={toggle} />
+              <SortableTh label="Создан" column="createdAt" sort={sort} onSort={toggle} />
               <TableHead className="text-right">Действия</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {users.map((u) => (
+            {sortedUsers.map((u) => (
               <TableRow key={u.id}>
                 <TableCell className="font-medium">{u.name}</TableCell>
                 <TableCell>

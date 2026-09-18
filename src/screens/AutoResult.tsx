@@ -18,6 +18,7 @@ import { configStats } from "../lib/compatibility";
 import { formatPrice, USAGE_LABELS, CATEGORY_LABELS } from "../lib/format";
 import { saveConfigAction, shareAction } from "../lib/actions";
 import { useAuth } from "../lib/auth";
+import { useSeller } from "../lib/useSeller";
 import { fetchCatalog } from "../lib/api";
 import { uid } from "../lib/session";
 import type { ComponentCategory, Config, Part, SurveyAnswers } from "../types";
@@ -27,6 +28,7 @@ export default function AutoResult() {
   const navigate = useNavigate();
   const { toast } = useToast();
   const { user, isCustomer } = useAuth();
+  const { sellerId } = useSeller();
   const [loadState, setLoadState] = useState<"loading" | "done">("loading");
   const [reviewOpen, setReviewOpen] = useState(false);
   const [catalog, setCatalog] = useState<Record<ComponentCategory, Part[]> | null>(null);
@@ -35,7 +37,7 @@ export default function AutoResult() {
   useEffect(() => {
     if (!answers) return;
     let cancelled = false;
-    fetchCatalog().then((c) => {
+    fetchCatalog(sellerId).then((c) => {
       if (cancelled) return;
       setCatalog(c);
       setLoadState("done");
@@ -44,7 +46,7 @@ export default function AutoResult() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [sellerId]);
 
   const cfg: Config | null = useMemo(
     () => (answers && catalog ? buildRecommendation(answers, catalog) : null),
@@ -108,7 +110,7 @@ export default function AutoResult() {
       navigate("/auth");
       return;
     }
-    const res = await saveConfigAction({ ...cfg, id: uid("cfg"), updatedAt: Date.now() }, user.id);
+    const res = await saveConfigAction({ ...cfg, id: uid("cfg"), updatedAt: Date.now(), sellerId }, user.id);
     toast(res.message);
   };
 
@@ -210,7 +212,7 @@ export default function AutoResult() {
                     {CATEGORY_LABELS[category] ?? category}
                   </span>
                   <span className="truncate font-medium">{part.name}</span>
-                  <span className="whitespace-nowrap">{formatPrice(part.price)}</span>
+                  <span className="whitespace-nowrap">{formatPrice(part.price ?? 0)}</span>
                 </div>
               );
             })}

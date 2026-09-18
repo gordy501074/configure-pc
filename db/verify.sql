@@ -45,9 +45,24 @@ UNION ALL SELECT 'orphan_order_item', (
 -- 3. Sanity aggregates.
 SELECT
   (SELECT count(DISTINCT category) FROM part)            AS part_categories,
-  (SELECT sum(price_kopecks) FROM part)                  AS part_price_kopecks,
   (SELECT count(*) FROM part WHERE is_active <> 1)       AS inactive_parts,
+  (SELECT count(*) FROM price_list)                      AS price_lists,
+  (SELECT count(*) FROM price_list_item)                 AS price_list_items,
+  (SELECT count(*) FROM price_list WHERE is_active = 1)  AS active_price_lists,
   (SELECT count(*) FROM config_part WHERE part_id NOT IN (SELECT part_id FROM part)) AS dangling_config_parts;
+
+-- 3b. Price-list / seller binding sanity (plan v7):
+--   - part price removed: sum of part price_kopecks is gone by design (column absent)
+--   - active ConfiГУРА price list exists
+--   - config / ready_pc bound to a seller.
+SELECT
+  (SELECT count(*) FROM price_list pl
+     JOIN user_account u ON u.user_id = pl.seller_id
+    WHERE u.role = 'seller' AND pl.is_active = 1)        AS active_seller_price_lists,
+  (SELECT count(*) FROM config WHERE seller_id IS NOT NULL)   AS configs_with_seller,
+  (SELECT count(*) FROM ready_pc WHERE seller_id IS NOT NULL) AS ready_pcs_with_seller,
+  (SELECT count(DISTINCT c.seller_id) FROM config c
+     JOIN price_list pl ON pl.seller_id = c.seller_id)   AS config_sellers_with_price_list;
 
 -- 4. Sample first 10 configs with their part-row-count (plan verification target).
 SELECT c.config_id, c.name, count(cp.part_id) AS parts_in_config

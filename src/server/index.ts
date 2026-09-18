@@ -11,6 +11,7 @@ import { createSellerRepository } from "./repository/seller.ts";
 import { createVendorRepository } from "./repository/vendor.ts";
 import { createAppStateRepository } from "./repository/app-state.ts";
 import { createAnalyticsRepository, type AnalyticsEvent } from "./repository/analytics.ts";
+import { createPriceListRepository } from "./repository/price-list.ts";
 import { openDb } from "./db.ts";
 import type { SaveConfigInput, SaveOrderInput, SaveReviewInput } from "./repository/user-data.ts";
 import type { ComponentCategory, PartCompat, SpecItem, UserRole } from "./repository/types.ts";
@@ -27,6 +28,7 @@ const sellerRepo = createSellerRepository(db);
 const vendorRepo = createVendorRepository(db);
 const appState = createAppStateRepository(db);
 const analytics = createAnalyticsRepository(db);
+const priceLists = createPriceListRepository(db);
 
 const VALID_ROLES: UserRole[] = ["customer", "seller", "admin"];
 
@@ -128,27 +130,153 @@ app.get("/api/parts", (req, res) => {
   if (includeInactive && actorRole(req)!.role !== "seller" && actorRole(req)!.role !== "admin") {
     return res.status(403).json({ error: "forbidden" });
   }
+  const sellerId =
+    typeof req.query.sellerId === "string" ? req.query.sellerId : undefined;
   res.json(
     category
-      ? catalog.listParts(category as never, includeInactive)
-      : catalog.listParts(undefined, includeInactive),
+      ? catalog.listParts(category as never, includeInactive, sellerId)
+      : catalog.listParts(undefined, includeInactive, sellerId),
   );
 });
 
 app.get("/api/parts/:id", (req, res) => {
-  const part = catalog.getPart(req.params.id);
+  const sellerId =
+    typeof req.query.sellerId === "string" ? req.query.sellerId : undefined;
+  const part = catalog.getPart(req.params.id, sellerId);
   if (!part) return res.status(404).json({ error: "part not found" });
   res.json(part);
 });
 
-app.get("/api/ready", (_req, res) => {
-  res.json(catalog.listReadyPcs());
+app.get("/api/ready", (req, res) => {
+  const sellerId =
+    typeof req.query.sellerId === "string" ? req.query.sellerId : undefined;
+  res.json(catalog.listReadyPcs(sellerId));
 });
 
 app.get("/api/ready/:id", (req, res) => {
-  const pc = catalog.getReadyPc(req.params.id);
+  const sellerId =
+    typeof req.query.sellerId === "string" ? req.query.sellerId : undefined;
+  const pc = catalog.getReadyPc(req.params.id, sellerId);
   if (!pc) return res.status(404).json({ error: "ready pc not found" });
   res.json(pc);
+});
+
+// ---- Sellers (for the catalog seller selector) ----
+app.get("/api/sellers", (_req, res) => {
+  const sellers = userData
+    .listUsers()
+    .filter((u) => u.role === "seller")
+    .map((u) => ({ id: u.id, name: u.name, company: u.company }));
+  res.json(sellers);
+});
+
+// ---- Price lists (owner or admin) ----
+function priceListActor(
+  req: express.Request,
+  res: express.Response,
+): { actor: { userId: string; role: UserRole }; sellerId: string } | null {
+  const actor = actorRole(req);
+  if (!actor) {
+    res.status(403).json({ error: "unauthorized" });
+    return null;
+  }
+  if (actor.role !== "admin" && actor.userId !== req.params.id) {
+    res.status(403).json({ error: "forbidden" });
+    return null;
+  }
+  return { actor, sellerId: String(req.params.id) };
+}
+
+app.get("/api/seller/:id/price-lists", (req, res) => {
+  const ctx = priceListActor(req, res);
+  if (!ctx) return;
+  res.json(priceLists.listPriceLists(ctx.sellerId));
+});
+
+app.post("/api/seller/:id/price-lists", (req, res) => {
+  const ctx = priceListActor(req, res);
+  if (!ctx) return;
+  const name = String((req.body as { name?: unknown })?.name ?? "").trim();
+  if (!name) return res.status(400).json({ error: "name required" });
+  const created = priceLists.createPriceList(ctx.sellerId, name);
+  res.status(201).json(created);
+});
+
+app.patch("/api/seller/:id/price-lists/:listId", (req, res) => {
+  const ctx = priceListActor(req, res);
+  if (!ctx) return;
+  const name = String((req.body as { name?: unknown })?.name ?? "").trim();
+  if (!name) return res.status(400).json({ error: "name required" });
+  const updated = priceLists.renamePriceList(String(req.params.listId), name);
+  if (!updated) return res.status(404).json({ error: "price list not found" });
+  res.json(updated);
+});
+
+app.delete("/api/seller/:id/price-lists/:listId", (req, res) => {
+  const ctx = priceListActor(req, res);
+  if (!ctx) return;
+  const ok = priceLists.deletePriceList(String(req.params.listId));
+  if (!ok) return res.status(404).json({ error: "price list not found" });
+  res.status(204).end();
+});
+
+app.post("/api/seller/:id/price-lists/:listId/activate", (req, res) => {
+  const ctx = priceListActor(req, res);
+  if (!ctx) return;
+  const updated = priceLists.setActivePriceList(String(req.params.listId));
+  if (!updated) return res.status(404).json({ error: "price list not found" });
+  res.json(updated);
+});
+
+app.put("/api/seller/:id/price-lists/:listId/items/:partId", (req, res) => {
+  const ctx = priceListActor(req, res);
+  if (!ctx) return;
+  const price = Number((req.body as { price?: unknown })?.price);
+  if (!Number.isFinite(price) || price < 0) {
+    return res.status(400).json({ error: "invalid_price" });
+  }
+  const updated = priceLists.upsertItem(
+    String(req.params.listId),
+    String(req.params.partId),
+    price,
+  );
+  if (!updated) return res.status(404).json({ error: "price list not found" });
+  res.json(updated);
+});
+
+app.delete("/api/seller/:id/price-lists/:listId/items/:partId", (req, res) => {
+  const ctx = priceListActor(req, res);
+  if (!ctx) return;
+  const ok = priceLists.deleteItem(
+    String(req.params.listId),
+    String(req.params.partId),
+  );
+  if (!ok) return res.status(404).json({ error: "item not found" });
+  res.status(204).end();
+});
+
+app.get("/api/seller/:id/price-lists/:listId/items/missing", (req, res) => {
+  const ctx = priceListActor(req, res);
+  if (!ctx) return;
+  const includeInactive = req.query.includeInactive === "1";
+  res.json(
+    priceLists.listMissingItems(
+      ctx.sellerId,
+      String(req.params.listId),
+      includeInactive,
+    ),
+  );
+});
+
+app.post("/api/seller/:id/price-lists/:listId/items/bulk", (req, res) => {
+  const ctx = priceListActor(req, res);
+  if (!ctx) return;
+  const partIds = (req.body as { partIds?: unknown })?.partIds;
+  const ids = Array.isArray(partIds)
+    ? (partIds as unknown[]).filter((x): x is string => typeof x === "string")
+    : [];
+  const result = priceLists.addItems(String(req.params.listId), ids);
+  res.json(result);
 });
 
 // ---- User / session ----
@@ -361,8 +489,6 @@ function validatePartBody(body: Record<string, unknown>): string | null {
   if (!brand) return "brand_required";
   const vendor = String(body.vendor ?? "").trim();
   if (!vendor) return "vendor_required";
-  const price = Number(body.price);
-  if (!Number.isFinite(price) || price < 0) return "invalid_price";
   const tdp = Number(body.tdp ?? 0);
   if (!Number.isFinite(tdp) || tdp < 0 || tdp > 65355) return "invalid_tdp";
 
@@ -417,7 +543,6 @@ app.post("/api/components", (req, res) => {
     name: composePartName(vendor.name, brand),
     brand,
     vendorId: vendor.id,
-    priceKopecks: Math.round(Number(body.price) * 100),
     tdpWatt: Math.round(Number(body.tdp ?? 0)),
     compat,
     specs,
@@ -440,7 +565,6 @@ app.patch("/api/components/:id", (req, res) => {
     name?: string;
     brand?: string;
     vendorId?: string;
-    priceKopecks?: number;
     tdpWatt?: number;
     compat?: PartCompat;
     specs?: SpecItem[];
@@ -449,13 +573,6 @@ app.patch("/api/components/:id", (req, res) => {
   const brand = typeof body.brand === "string" ? body.brand.trim() : undefined;
   if (brand !== undefined) patch.brand = brand;
   if (vendorId !== undefined) patch.vendorId = vendorId;
-  if (body.price !== undefined) {
-    const price = Number(body.price);
-    if (!Number.isFinite(price) || price < 0) {
-      return res.status(400).json({ error: "invalid_price" });
-    }
-    patch.priceKopecks = Math.round(price * 100);
-  }
   if (body.tdp !== undefined) {
     const tdp = Number(body.tdp);
     if (!Number.isFinite(tdp) || tdp < 0 || tdp > 65355) {
@@ -512,7 +629,6 @@ app.post("/api/catalog/initialize", (req, res) => {
         name: composePartName(vendor.name, brand),
         brand,
         vendorId: vendor.id,
-        priceKopecks: Math.round(p.price * 100),
         tdpWatt: Math.round(p.tdp),
         compat: p.compat,
         specs: p.specs,

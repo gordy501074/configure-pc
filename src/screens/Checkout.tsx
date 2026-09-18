@@ -49,7 +49,7 @@ export default function Checkout() {
         kind: "config" as const,
         refId: part.id,
         name: part.name,
-        price: part.price,
+        price: part.price ?? 0,
         count: 1,
       }));
   const total = stats.totalPrice;

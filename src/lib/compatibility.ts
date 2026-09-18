@@ -10,9 +10,22 @@ export interface ConfigStats {
   totalTdp: number;
 }
 
-/** True when a part is orderable (not deactivated / unavailable). */
+/** True when a part is orderable (active/available and has a positive price). */
 export function isPartAvailable(part: Part): boolean {
-  return part.available !== false;
+  if (part.available === false) return false;
+  // When a price is required (present field `priceSet`), it must be > 0.
+  if (part.priceSet === true && (part.price === undefined || part.price <= 0)) {
+    return false;
+  }
+  return true;
+}
+
+/** True when snapshot `price` differs from `current` by more than 5% (|..|). */
+export function isPriceStale(snapshot?: number, current?: number): boolean {
+  const src = snapshot ?? 0;
+  const cur = current ?? 0;
+  if (src <= 0 || cur <= 0) return false;
+  return Math.abs(src - cur) / cur > 0.05;
 }
 
 /** Sum price and power draw of a config (over available parts only). */
@@ -21,7 +34,7 @@ export function configStats(config: Pick<Config, "parts">): ConfigStats {
   let totalTdp = 0;
   for (const { part } of config.parts) {
     if (!part || !isPartAvailable(part)) continue;
-    totalPrice += part.price;
+    totalPrice += part.price ?? 0;
     totalTdp += part.tdp;
   }
   return { totalPrice, totalTdp };
@@ -177,6 +190,9 @@ export function isConfigComplete(
     const part = chosen[c];
     if (!part) return false;
     if (!isPartAvailable(part)) return false;
+    if (!(part.priceSet === true) || part.price === undefined || part.price <= 0) {
+      return false;
+    }
   }
   return validateConfig(chosen).length === 0;
 }
