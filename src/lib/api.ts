@@ -76,8 +76,12 @@ function mapPart(p: PartApi): Part {
 
 export async function fetchParts(
   category?: ComponentCategory,
+  includeInactive?: boolean,
 ): Promise<Part[]> {
-  const q = category ? `?category=${encodeURIComponent(category)}` : "";
+  const params = new URLSearchParams();
+  if (category) params.set("category", category);
+  if (includeInactive) params.set("includeInactive", "1");
+  const q = params.toString() ? `?${params.toString()}` : "";
   const rows = await req<PartApi[]>(`/parts${q}`);
   return rows.map(mapPart);
 }
@@ -465,6 +469,12 @@ export async function updatePart(id: string, patch: UpdatePartInput): Promise<Pa
 
 export async function deactivatePart(id: string): Promise<void> {
   await req<void>(`/components/${encodeURIComponent(id)}/deactivate`, {
+    method: "POST",
+  });
+}
+
+export async function reactivatePart(id: string): Promise<void> {
+  await req<void>(`/components/${encodeURIComponent(id)}/reactivate`, {
     method: "POST",
   });
 }

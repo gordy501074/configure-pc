@@ -1,4 +1,13 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+
+import {
+  LayoutGrid,
+  LayoutList,
+  Pencil,
+  Plus,
+  RotateCcw,
+  Trash2,
+} from "lucide-react";
 
 import {
   Badge,
@@ -7,22 +16,31 @@ import {
   EmptyState,
   Field,
   Input,
+  Label,
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
+  Switch,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
   Textarea,
   Modal,
   useToast,
 } from "../components/ui";
-import { formatPrice, CATEGORY_LABELS } from "../lib/format";
+import { CATEGORY_LABELS } from "../lib/format";
 import {
   createPart,
   deactivatePart,
   fetchParts,
   fetchVendors,
   initializeCatalog,
+  reactivatePart,
   updatePart,
 } from "../lib/api";
 import type { ComponentCategory, Part, PartCompat, Vendor } from "../types";
@@ -152,6 +170,8 @@ export function ProfileComponents({ isAdmin }: { isAdmin: boolean }) {
   const [parts, setParts] = useState<Part[]>([]);
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [loading, setLoading] = useState(true);
+  const [showInactive, setShowInactive] = useState(false);
+  const [view, setView] = useState<"list" | "grid">("list");
   const [form, setForm] = useState<FormState>(BLANK);
   const [editId, setEditId] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
@@ -160,7 +180,7 @@ export function ProfileComponents({ isAdmin }: { isAdmin: boolean }) {
 
   const reload = useCallback(async () => {
     try {
-      const [v, p] = await Promise.all([fetchVendors(), fetchParts()]);
+      const [v, p] = await Promise.all([fetchVendors(), fetchParts(undefined, showInactive)]);
       setVendors(v);
       setParts(p);
     } catch {
@@ -168,7 +188,7 @@ export function ProfileComponents({ isAdmin }: { isAdmin: boolean }) {
     } finally {
       setLoading(false);
     }
-  }, [toast]);
+  }, [toast, showInactive]);
 
   useEffect(() => {
     void reload();
@@ -299,6 +319,21 @@ export function ProfileComponents({ isAdmin }: { isAdmin: boolean }) {
     }
   };
 
+  const handleReactivate = async (p: Part) => {
+    try {
+      await reactivatePart(p.id);
+      toast(`«${p.name}» активирован`);
+      await reload();
+    } catch {
+      toast("Не удалось активировать компонент", "error");
+    }
+  };
+
+  const handleToggleInactive = (checked: boolean) => {
+    setShowInactive(checked);
+    setLoading(true);
+  };
+
   const handleInitialize = async () => {
     setInitBusy(true);
     try {
@@ -323,13 +358,49 @@ export function ProfileComponents({ isAdmin }: { isAdmin: boolean }) {
     <section aria-label="Компоненты" className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-lg font-semibold">Справочник компонентов</h2>
+        <div className="flex items-center gap-3">
+          <div className="inline-flex items-center rounded-md border p-0.5" role="group" aria-label="Режим отображения">
+            <Button
+              variant={view === "list" ? "secondary" : "ghost"}
+              size="icon"
+              className="size-7"
+              onClick={() => setView("list")}
+              aria-pressed={view === "list"}
+              title="Список"
+            >
+              <LayoutList aria-hidden="true" />
+            </Button>
+            <Button
+              variant={view === "grid" ? "secondary" : "ghost"}
+              size="icon"
+              className="size-7"
+              onClick={() => setView("grid")}
+              aria-pressed={view === "grid"}
+              title="Карточки"
+            >
+              <LayoutGrid aria-hidden="true" />
+            </Button>
+          </div>
+          <Label htmlFor="show-inactive" className="cursor-pointer">
+            Показывать деактивированные
+          </Label>
+          <Switch
+            id="show-inactive"
+            checked={showInactive}
+            onCheckedChange={handleToggleInactive}
+            aria-label="Показывать деактивированные"
+          />
+        </div>
         <div className="flex gap-2">
           {isAdmin ? (
             <Button variant="secondary" onClick={() => setInitOpen(true)}>
               Инициализировать справочник
             </Button>
           ) : null}
-          <Button onClick={openCreate}>Создать компонент</Button>
+          <Button onClick={openCreate}>
+            <Plus aria-hidden="true" />
+            Создать компонент
+          </Button>
         </div>
       </div>
 
@@ -342,20 +413,20 @@ export function ProfileComponents({ isAdmin }: { isAdmin: boolean }) {
         />
       ) : (
         <div className="flex flex-col gap-3">
-          {CATEGORY_ORDER.map((cat) => {
-            const list = grouped.get(cat) ?? [];
-            if (list.length === 0) return null;
-            return (
-              <Card key={cat} className="gap-3 p-4">
-                <h3 className="text-base font-semibold">{CATEGORY_LABELS[cat]}</h3>
-                <div className="flex flex-col gap-2">
-                  {list.map((p) => (
-                    <div
-                      key={p.id}
-                      className="flex flex-wrap items-center justify-between gap-2 border-t pt-2"
-                    >
-                      <div className="flex min-w-0 flex-col">
-                        <div className="flex flex-wrap items-center gap-2">
+          {view === "grid" ? (
+            CATEGORY_ORDER.map((cat) => {
+              const list = grouped.get(cat) ?? [];
+              if (list.length === 0) return null;
+              return (
+                <Card key={cat} className="gap-3 p-4">
+                  <h3 className="text-base font-semibold">{CATEGORY_LABELS[cat]}</h3>
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                    {list.map((p) => (
+                      <div
+                        key={p.id}
+                        className={`flex flex-col gap-2 rounded-md border p-3 ${p.available ? "" : "opacity-80"}`}
+                      >
+                        <div className="flex items-start justify-between gap-2">
                           <span className={p.available ? "font-medium" : "font-medium text-muted-foreground line-through"}>
                             {p.name}
                           </span>
@@ -365,30 +436,106 @@ export function ProfileComponents({ isAdmin }: { isAdmin: boolean }) {
                         </div>
                         <span className="text-sm text-muted-foreground">
                           {vendors.find((v) => v.id === p.vendorId)?.name ?? p.brand}
-                          {p.available ? ` · ${formatPrice(p.price)} · ${p.tdp} Вт` : ""}
+                          {p.available ? ` · ${p.tdp} Вт` : ""}
                         </span>
                         {p.available ? (
-                          <span className="pt-0.5 text-sm text-muted-foreground">
+                          <span className="text-sm text-muted-foreground">
                             {compatSummary(cat, p) || "—"}
                           </span>
                         ) : null}
+                        {p.available ? (
+                          <div className="mt-auto flex gap-1 border-t pt-2">
+                            <Button variant="ghost" size="icon" className="size-8" onClick={() => openEdit(p)} title="Редактировать" aria-label={`Редактировать ${p.name}`}>
+                              <Pencil aria-hidden="true" />
+                            </Button>
+                            <Button variant="ghost" size="icon" className="size-8" onClick={() => handleDeactivate(p)} title="Деактивировать" aria-label={`Деактивировать ${p.name}`}>
+                              <Trash2 aria-hidden="true" />
+                            </Button>
+                          </div>
+                        ) : (
+                          <div className="mt-auto border-t pt-2">
+                            <Button variant="secondary" size="icon" className="size-8" onClick={() => handleReactivate(p)} title="Активировать" aria-label={`Активировать ${p.name}`}>
+                              <RotateCcw aria-hidden="true" />
+                            </Button>
+                          </div>
+                        )}
                       </div>
-                      {p.available ? (
-                        <div className="flex gap-2">
-                          <Button variant="secondary" size="sm" onClick={() => openEdit(p)}>
-                            Редактировать
-                          </Button>
-                          <Button variant="ghost" size="sm" onClick={() => handleDeactivate(p)}>
-                            Деактивировать
-                          </Button>
-                        </div>
-                      ) : null}
-                    </div>
-                  ))}
-                </div>
-              </Card>
-            );
-          })}
+                    ))}
+                  </div>
+                </Card>
+              );
+            })
+          ) : (
+            <Card className="gap-3 p-4">
+              <h3 className="text-base font-semibold">Справочник компонентов</h3>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Компонент</TableHead>
+                    <TableHead className="text-left">Категория</TableHead>
+                    <TableHead>TDP</TableHead>
+                    <TableHead>Особенности</TableHead>
+                    <TableHead className="text-right">Действия</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {CATEGORY_ORDER.map((cat) => {
+                    const list = grouped.get(cat) ?? [];
+                    if (list.length === 0) return null;
+                    return (
+                      <Fragment key={cat}>
+                        <TableRow className="bg-muted font-medium">
+                          <TableCell colSpan={5} className="font-semibold">
+                            {CATEGORY_LABELS[cat]}
+                          </TableCell>
+                        </TableRow>
+                        {list.map((p) => (
+                          <TableRow key={p.id}>
+                            <TableCell>
+                              <div className="flex min-w-0 flex-col">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className={p.available ? "font-medium" : "font-medium text-muted-foreground line-through"}>
+                                    {p.name}
+                                  </span>
+                                  {!p.available ? (
+                                    <Badge variant="destructive">Недоступен</Badge>
+                                  ) : null}
+                                </div>
+                                <span className="text-sm text-muted-foreground">
+                                  {vendors.find((v) => v.id === p.vendorId)?.name ?? p.brand}
+                                </span>
+                              </div>
+                            </TableCell>
+                            <TableCell>{CATEGORY_LABELS[cat]}</TableCell>
+                            <TableCell>{p.available ? `${p.tdp} Вт` : "—"}</TableCell>
+                            <TableCell className="max-w-[260px] truncate">
+                              {p.available ? (compatSummary(cat, p) || "—") : "—"}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              {p.available ? (
+                                <div className="flex justify-end gap-2 whitespace-nowrap">
+                                  <Button variant="secondary" size="sm" onClick={() => openEdit(p)}>
+                                    Редактировать
+                                  </Button>
+                                  <Button variant="ghost" size="sm" onClick={() => handleDeactivate(p)}>
+                                    Деактивировать
+                                  </Button>
+                                </div>
+                              ) : (
+                                <Button variant="secondary" size="sm" onClick={() => handleReactivate(p)}>
+                                  Активировать
+                                </Button>
+                              )}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </Fragment>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </Card>
+          )}
         </div>
       )}
 

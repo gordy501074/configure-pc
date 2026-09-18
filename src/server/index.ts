@@ -120,10 +120,18 @@ function requireSellerOrAdmin(
 app.get("/api/parts", (req, res) => {
   const category =
     typeof req.query.category === "string" ? req.query.category : undefined;
+  // Only sellers/admins may list deactivated parts (catalog management view).
+  const includeInactive = req.query.includeInactive === "1";
+  if (includeInactive && !actorRole(req)) {
+    return res.status(403).json({ error: "unauthorized" });
+  }
+  if (includeInactive && actorRole(req)!.role !== "seller" && actorRole(req)!.role !== "admin") {
+    return res.status(403).json({ error: "forbidden" });
+  }
   res.json(
     category
-      ? catalog.listParts(category as never)
-      : catalog.listParts(),
+      ? catalog.listParts(category as never, includeInactive)
+      : catalog.listParts(undefined, includeInactive),
   );
 });
 
@@ -478,6 +486,13 @@ app.patch("/api/components/:id", (req, res) => {
 app.post("/api/components/:id/deactivate", (req, res) => {
   if (!requireSellerOrAdmin(req, res)) return;
   const ok = catalog.deactivatePart(req.params.id);
+  if (!ok) return res.status(404).json({ error: "part not found" });
+  res.json({ ok: true });
+});
+
+app.post("/api/components/:id/reactivate", (req, res) => {
+  if (!requireSellerOrAdmin(req, res)) return;
+  const ok = catalog.reactivatePart(req.params.id);
   if (!ok) return res.status(404).json({ error: "part not found" });
   res.json({ ok: true });
 });

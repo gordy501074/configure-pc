@@ -38,7 +38,11 @@ export interface UpdatePartInput {
 }
 
 export interface CatalogRepository {
-  listParts(category?: ComponentCategory): PartDto[];
+  /**
+   * List parts. When `includeInactive` is true, deactivated (/unavailable)
+   * parts are returned too (catalog management use).
+   */
+  listParts(category?: ComponentCategory, includeInactive?: boolean): PartDto[];
   getPart(id: string): PartDto | null;
   /** Fetch a part regardless of is_active/is_available (admin internal use). */
   getPartAny(id: string): PartDto | null;
@@ -48,6 +52,8 @@ export interface CatalogRepository {
   createPart(input: CreatePartInput): PartDto;
   updatePart(id: string, patch: UpdatePartInput): PartDto | null;
   deactivatePart(id: string): boolean;
+  /** Reactivate a deactivated part so it becomes orderable again. */
+  reactivatePart(id: string): boolean;
   /** Full catalog replacement (admin); returns affected part ids so callers can report. */
   initializeCatalog(parts: CreatePartInput[]): { inserted: number; deleted: number };
 }
@@ -77,8 +83,14 @@ export function createCatalogRepository(db: Database): CatalogRepository {
   const listPartsStmt = db.prepare(
     `SELECT * FROM part WHERE is_active = 1 ORDER BY category, name`,
   );
+  const listAllPartsStmt = db.prepare(
+    `SELECT * FROM part WHERE is_active IN (0, 1) ORDER BY category, name`,
+  );
   const listPartsByCatStmt = db.prepare(
     `SELECT * FROM part WHERE category = ? AND is_active = 1 ORDER BY name`,
+  );
+  const listAllPartsByCatStmt = db.prepare(
+    `SELECT * FROM part WHERE category = ? AND is_active IN (0, 1) ORDER BY name`,
   );
   const getPartStmt = db.prepare(
     `SELECT * FROM part WHERE part_id = ? AND is_active = 1`,
@@ -121,8 +133,11 @@ export function createCatalogRepository(db: Database): CatalogRepository {
   }
 
   return {
-    listParts(category) {
-      const rows = category ? listPartsByCatStmt.all(category) : listPartsStmt.all();
+    listParts(category, includeInactive) {
+      const all = includeInactive === true;
+      const rows = category
+        ? (all ? listAllPartsByCatStmt : listPartsByCatStmt).all(category)
+        : (all ? listAllPartsStmt : listPartsStmt).all();
       return (rows as PartRow[]).map(partToDto);
     },
     getPart(id) {
@@ -202,6 +217,14 @@ export function createCatalogRepository(db: Database): CatalogRepository {
       if (!existing) return false;
       db.prepare(
         `UPDATE part SET is_active = 0, is_available = 0 WHERE part_id = ?`,
+      ).run(id);
+      return true;
+    },
+    reactivatePart(id) {
+      const existing = getPartAnyStmt.get(id) as PartRow | undefined;
+      if (!existing) return false;
+      db.prepare(
+        `UPDATE part SET is_active = 1, is_available = 1 WHERE part_id = ?`,
       ).run(id);
       return true;
     },
