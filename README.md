@@ -561,6 +561,23 @@ npm run server   # API на http://localhost:8787
 npm run dev      # фронтенд на http://localhost:5173 (Vite проксирует /api)
 ```
 
+### Постоянный (persistent) запуск
+
+`npm start` — фоновый по своему механизму, но привязан к сессии. Если нужен
+**независимый** процесс, который переживает закрытие терминала/Kilo и не гнётся
+при смене сессии (например, как долгоживущий dev-сервер), используйте:
+
+```bash
+npm run start:persistent   # запуск detached-процесса (db:init → db:seed → API + Vite)
+npm run status:persistent  # статус (PID)
+npm run stop:persistent    # остановка
+```
+Логи такого запуска пишутся в `logs/` (`dev-app.out.log` — stdout,
+`dev-app.err.log` — stderr), PID — в `.run/dev-app.pid`,
+
+оба пути в `.gitignore`. Готовность проверяйте по портам
+`http://localhost:5173` (Vite) и `http://localhost:8787` (API).
+
 Демо-доступ: **Клиент** — вход по e-mail или телефону (мок-SMS); **Продавец** —
 `user@company.com` (по e-mail); **Администратор** — `avgordeev@alfabank.ru` (по e-mail).
 
@@ -583,7 +600,10 @@ npm run preview
 
 | Команда | Действие |
 | --- | --- |
-| `npm start` / `npm run dev:app` | Запуск всего приложения: `db:init` → `db:seed` → API + Vite (`scripts/dev-app.mjs`) |
+| `npm start` / `npm run dev:app` | Запуск всего приложения в привязке к сессии: `db:init` → `db:seed` → API + Vite (`scripts/dev-app.mjs`); завершается при закрытии сессии |
+| `npm run start:persistent` | Запуск как **постоянного** (detached) процесса: переживает закрытие терминала/сессии, логи в `logs/` (`dev-app.out.log`/`dev-app.err.log`), PID в `.run/dev-app.pid` |
+| `npm run status:persistent` | Статус постоянного процесса (PID + наличие) |
+| `npm run stop:persistent` | Остановка постоянного процесса (SIGTERM → чистое завершение API/Vite) |
 | `npm run dev` | Запуск dev-сервера (Vite) |
 | `npm run build` | Проверка типов + прод-сборка |
 | `npm run preview` | Просмотр прод-сборки |

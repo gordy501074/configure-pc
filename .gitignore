@@ -4,6 +4,8 @@ dist-node
 dist-ssr
 *.local
 *.log
+.run/
+logs/
 .DS_Store
 db/confi.db
 db/confi.db-wal
