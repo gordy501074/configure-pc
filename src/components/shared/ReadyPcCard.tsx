@@ -21,7 +21,11 @@ export function ReadyPcCard({ pc }: { pc: ReadyPc }) {
         <p className="mt-1 text-sm text-muted-foreground">{pc.summary}</p>
 
         <div className="mt-3">
-          <StarRating value={pc.rating} showValue reviewCount={pc.reviewCount} />
+          {pc.reviewCount > 0 ? (
+            <StarRating value={pc.rating} showValue reviewCount={pc.reviewCount} />
+          ) : (
+            <span className="text-sm text-muted-foreground">Пока нет отзывов</span>
+          )}
         </div>
 
         <div className="mt-4 grid gap-2">

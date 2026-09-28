@@ -1,7 +1,7 @@
--- Confi SQLite schema (STRICT, WAL). Version 7.
+-- Confi SQLite schema (STRICT, WAL). Version 8.
 -- DDL per plan section 2. Applied idempotently by db:init / db:seed.
 
-PRAGMA user_version = 7;
+PRAGMA user_version = 8;
 PRAGMA journal_mode = WAL;
 
 -- Vendors (trademarks) referenced by parts. Populated on the fly from part.brand.
@@ -76,10 +76,13 @@ CREATE TABLE IF NOT EXISTS config (
   source     TEXT NOT NULL DEFAULT 'custom' CHECK (source IN ('custom','auto','ready')),
   usage      TEXT CHECK (usage IN ('gaming','work','video','universal')),
   seller_id  TEXT,
+  -- For source='ready': the ready_pc this config was saved from (nullable).
+  ready_pc_id TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   FOREIGN KEY (user_id) REFERENCES user_account(user_id) ON DELETE CASCADE,
-  FOREIGN KEY (seller_id) REFERENCES user_account(user_id) ON DELETE SET NULL
+  FOREIGN KEY (seller_id) REFERENCES user_account(user_id) ON DELETE SET NULL,
+  FOREIGN KEY (ready_pc_id) REFERENCES ready_pc(ready_pc_id) ON DELETE SET NULL
 ) STRICT;
 
 CREATE TABLE IF NOT EXISTS config_part (

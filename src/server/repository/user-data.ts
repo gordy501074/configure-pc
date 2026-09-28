@@ -31,6 +31,7 @@ export interface SaveConfigInput {
   source: ConfigSource;
   usage?: Usage;
   seller_id?: string;
+  ready_pc_id?: string;
   parts: { category: string; part_id: string; price?: number }[];
 }
 
@@ -144,12 +145,13 @@ export function createUserRepository(db: Database): UserDataRepository {
   );
   const getConfigStmt = db.prepare(`SELECT * FROM config WHERE config_id = ?`);
   const upsertConfigStmt = db.prepare(
-    `INSERT INTO config (config_id, user_id, name, source, usage, seller_id, created_at, updated_at)
-     VALUES (@id, @user_id, @name, @source, @usage, @seller_id,
+    `INSERT INTO config (config_id, user_id, name, source, usage, seller_id, ready_pc_id, created_at, updated_at)
+     VALUES (@id, @user_id, @name, @source, @usage, @seller_id, @ready_pc_id,
              @created_at, @updated_at)
      ON CONFLICT(config_id) DO UPDATE SET
        user_id=excluded.user_id, name=excluded.name, source=excluded.source,
        usage=excluded.usage, seller_id=excluded.seller_id,
+       ready_pc_id=excluded.ready_pc_id,
        updated_at=excluded.updated_at`,
   );
   const delConfigStmt = db.prepare(`DELETE FROM config WHERE config_id = ?`);
@@ -314,6 +316,23 @@ export function createUserRepository(db: Database): UserDataRepository {
     });
   }
 
+  function configDtoFor(row: ConfigRow): ConfigDto {
+    const parts = configPartsFor(row);
+    // For ready configs also treat an archived (is_active=0) source build as invalid.
+    let buildArchived = false;
+    if (row.source === "ready" && row.ready_pc_id) {
+      const rp = db
+        .prepare(`SELECT is_active FROM ready_pc WHERE ready_pc_id = ?`)
+        .get(row.ready_pc_id) as { is_active: number } | undefined;
+      buildArchived = rp ? rp.is_active !== 1 : true;
+    }
+    const buildInvalid =
+      row.source === "ready" &&
+      (buildArchived ||
+        parts.some((cp) => cp.part === null || cp.part?.available === false));
+    return configToDto(row, parts, buildInvalid);
+  }
+
   return {
     getUser(id) {
       const row = getUserStmt.get(id) as UserRow | undefined;
@@ -420,12 +439,12 @@ export function createUserRepository(db: Database): UserDataRepository {
 
     listConfigs(userId) {
       const rows = listConfigsStmt.all(userId) as ConfigRow[];
-      return rows.map((r) => configToDto(r, configPartsFor(r)));
+      return rows.map(configDtoFor);
     },
 
     getConfig(id) {
       const row = getConfigStmt.get(id) as ConfigRow | undefined;
-      return row ? configToDto(row, configPartsFor(row)) : null;
+      return row ? configDtoFor(row) : null;
     },
 
     saveConfig(input) {
@@ -437,6 +456,7 @@ export function createUserRepository(db: Database): UserDataRepository {
         source: input.source,
         usage: input.usage ?? null,
         seller_id: input.seller_id ?? "usr-seller",
+        ready_pc_id: input.ready_pc_id ?? null,
         created_at,
         updated_at: created_at,
       });
@@ -453,7 +473,7 @@ export function createUserRepository(db: Database): UserDataRepository {
       });
       del();
       const row = getConfigStmt.get(input.id) as ConfigRow;
-      return configToDto(row, configPartsFor(row));
+      return configDtoFor(row);
     },
 
     deleteConfig(id) {

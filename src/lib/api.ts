@@ -122,6 +122,9 @@ interface ReadyPcApi {
   inStock: boolean;
   rating: number;
   reviewCount: number;
+  valid: boolean;
+  sellerId?: string | null;
+  archived?: boolean;
   parts: ConfigPartApi[];
 }
 
@@ -159,13 +162,17 @@ function mapReady(p: ReadyPcApi): ReadyPc {
     inStock: p.inStock,
     rating: p.rating,
     reviewCount: p.reviewCount,
+    valid: p.valid,
+    sellerId: p.sellerId ?? undefined,
+    archived: p.archived,
     parts: p.parts.map(mapConfigPart),
   };
 }
 
-export async function fetchReadyPcs(sellerId?: string): Promise<ReadyPc[]> {
+export async function fetchReadyPcs(sellerId?: string, onlyValid?: boolean): Promise<ReadyPc[]> {
   const params = new URLSearchParams();
   if (sellerId) params.set("sellerId", sellerId);
+  if (onlyValid) params.set("valid", "1");
   const q = params.toString() ? `?${params.toString()}` : "";
   const rows = await req<ReadyPcApi[]>(`/ready${q}`);
   return rows.map(mapReady);
@@ -181,6 +188,66 @@ export async function fetchReadyPc(id: string, sellerId?: string): Promise<Ready
   } catch {
     return null;
   }
+}
+
+// ---- Seller ready builds (owner or admin) ----
+
+export interface ReadyBuildPartRef {
+  category: ComponentCategory;
+  partId: string;
+}
+
+export interface ReadyBuildInput {
+  brand: string;
+  model: string;
+  parts: ReadyBuildPartRef[];
+}
+
+export async function fetchSellerReadyBuilds(sellerId: string): Promise<ReadyPc[]> {
+  const rows = await req<ReadyPcApi[]>(`/seller/${encodeURIComponent(sellerId)}/ready`);
+  return rows.map(mapReady);
+}
+
+export async function fetchSellerReadyBuild(sellerId: string, buildId: string): Promise<ReadyPc | null> {
+  try {
+    const row = await req<ReadyPcApi>(`/seller/${encodeURIComponent(sellerId)}/ready/${encodeURIComponent(buildId)}`);
+    return mapReady(row);
+  } catch {
+    return null;
+  }
+}
+
+export async function createSellerReadyBuild(
+  sellerId: string,
+  input: ReadyBuildInput,
+): Promise<ReadyPc> {
+  return mapReady(await req<ReadyPcApi>(`/seller/${encodeURIComponent(sellerId)}/ready`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  }));
+}
+
+export async function updateSellerReadyBuild(
+  sellerId: string,
+  buildId: string,
+  input: Partial<ReadyBuildInput>,
+): Promise<ReadyPc> {
+  return mapReady(await req<ReadyPcApi>(`/seller/${encodeURIComponent(sellerId)}/ready/${encodeURIComponent(buildId)}`, {
+    method: "PUT",
+    body: JSON.stringify(input),
+  }));
+}
+
+export async function deleteSellerReadyBuild(sellerId: string, buildId: string): Promise<void> {
+  await req<void>(`/seller/${encodeURIComponent(sellerId)}/ready/${encodeURIComponent(buildId)}`, {
+    method: "DELETE",
+  });
+}
+
+export async function reactivateSellerReadyBuild(sellerId: string, buildId: string): Promise<ReadyPc> {
+  return mapReady(await req<ReadyPcApi>(`/seller/${encodeURIComponent(sellerId)}/ready/${encodeURIComponent(buildId)}/reactivate`, {
+    method: "POST",
+  }));
 }
 
 // ---- Onboarding ----
@@ -246,8 +313,10 @@ interface ConfigApi {
   source: Config["source"];
   usage?: Config["usage"];
   sellerId?: string;
+  readyPcId?: string;
   createdAt: number;
   updatedAt: number;
+  buildInvalid?: boolean;
   parts: ConfigPartApi[];
 }
 
@@ -258,8 +327,10 @@ function mapConfig(c: ConfigApi): Config {
     source: c.source,
     usage: c.usage,
     sellerId: c.sellerId,
+    readyPcId: c.readyPcId,
     createdAt: c.createdAt,
     updatedAt: c.updatedAt,
+    buildInvalid: c.buildInvalid,
     parts: c.parts.map(mapConfigPart),
   };
 }
@@ -271,8 +342,10 @@ function configToApi(c: Config): ConfigApi {
     source: c.source,
     usage: c.usage,
     sellerId: c.sellerId,
+    readyPcId: c.readyPcId,
     createdAt: c.createdAt,
     updatedAt: c.updatedAt,
+    buildInvalid: c.buildInvalid,
     parts: c.parts.map(({ category, part, price, currentPrice, unavailableReason }) => ({
       category,
       part: (part ? part : null) as PartApi | null,
@@ -295,6 +368,7 @@ export async function saveConfigRemote(config: Config, userId: string): Promise<
     source: api.source,
     usage: api.usage,
     seller_id: api.sellerId,
+    ready_pc_id: api.readyPcId,
     parts: api.parts.filter((p) => p.part).map(({ category, part, price }) => ({
       category,
       part_id: part!.id,

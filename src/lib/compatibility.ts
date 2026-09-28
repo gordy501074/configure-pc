@@ -196,3 +196,13 @@ export function isConfigComplete(
   }
   return validateConfig(chosen).length === 0;
 }
+
+/**
+ * True when a ready PC / config is complete and fully orderable: exactly the 8
+ * mandatory slots, each carrying an available part. Used for local build
+ * validation; the server's `valid` field remains the source of truth.
+ */
+export function isBuildCompleteValid(parts: Array<{ part: Part | null }>): boolean {
+  if (parts.length !== 8) return false;
+  return parts.every((cp) => !!cp.part && isPartAvailable(cp.part));
+}

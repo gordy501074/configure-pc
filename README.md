@@ -8,6 +8,8 @@
 ## Возможности
 
 - **Готовые ПК** — подборки Confi под задачи (игры, работа, монтаж, универсальные) с карточками, рейтингами, отзывами и признаком наличия на складе.
+- **Готовые конфигурации продавца** — на вкладке «Готовые конфигурации» (роли `seller`/`admin`) продавец собирает готовые сборки из позиций своего активного прайс-листа через модалку-конфигуратор: выбирает **бренд из своих брендов** (`seller_brand`) и вводит **модель**; полное `name` = `{бренд} {модель}`. Модель **уникальна среди активных сборок продавца** (регистронезависимо, бренд в проверку не входит). Сервер принимает только **полный состав из 8 категорий**, где каждая позиция есть в активном прайсе с ценой > 0 и её категория совпадает со слотом (`400 invalid_build`). Характеристики витрины (`Процессор/Видеокарта/Память/…`) генерируются из состава. Сборку можно **архивировать** (мягкое удаление, `is_active=0`) и **восстановить**; архивные не показываются в каталоге и не участвуют в проверке уникальности. Поле `valid` вычисляется на лету (8 слотов + orderable-позиции) — невалидные сборки не показываются на витрине.
+- **Недоступность готовой сборки для заказа** — если сборка ушла в архив, сохранённая из неё конфигурация клиента (`source=ready`) в разделе «Конфигурации» помечается бейджем **«Сборка недоступна для заказа»** (`buildInvalid`). На карточке в каталоге при `valid=false` скрываются «Оформить заказ»/рассрочка с пояснением; **заказы не затрагиваются** — позиция `order_item` хранит снимок названия/цены.
 - **Ручной конфигуратор** — выбор компонентов из каталога по 8 категориям с автоматической блокировкой несовместимых позиций в реальном времени.
 - **Автоподбор** — пошаговый опрос из 4 шагов (бюджет, назначение, платформа Intel/AMD, приоритет — производительность/цена/тишина) и автоматическая сборка оптимальной конфигурации.
 - **Администрирование** — для роли `admin`: список пользователей, создание, удаление и назначение ролей (`customer`/`seller`/`admin`) на отдельном защищённом маршруте `/admin` и на вкладке «Администрирование пользователей» в профиле.
@@ -26,6 +28,7 @@
 - **Онбординг** — гейт при первом посещении с перенаправлением неприветствованных пользователей на `/onboarding`.
 - **Доступность** — WCAG 2.1 AA, обязательный `:focus`, `prefers-reduced-motion`, семантическая разметка, поддержка клавиатуры, корректный `sr-only`.
 - **Недоступность компонентов** — деактивированный (`is_active=0`/`is_available=0`) или полностью удалённый при переинициализации компонент в сохранённой конфигурации/готовом ПК отображается как «**Компонент более недоступен для заказа**» (вместо названия и цены). Такая сборка считается **неполной** для заказа/сохранения; сумма и TDP считаются только по доступным компонентам.
+- **Рейтинг без отзывов** — у новой/заведённой вручную сборки без отзывов (`reviewCount=0`) вместо звёзд и «5,0» выводится «**Пока нет отзывов**»; новой сборке при создании проставляется `rating=0`.
 
 ## Технологии
 
@@ -69,7 +72,7 @@ src/
 ├── screens/           # Экраны (Home, Onboarding, Auth, ReadyPCs, PcCard,
 │                      #   CustomConfig, AutoSelect, AutoResult, Checkout,
 │                      #   InstallmentCheckout, Profile, ProfileComponents,
-│                      #   ProfilePriceLists, Admin, NotFound, Layout)
+│                      #   ProfilePriceLists, ProfileReadyBuilds, Admin, NotFound, Layout)
 │   └── guards.tsx     # Гейты доступа: RequireAuth / RequireRole / RequireCustomer
 ├── styles/
 │   └── global.css     # Tailwind v4 + oklch-дизайн-токены + базовые стили
@@ -97,7 +100,7 @@ src/
 | `/auto` | Автоподбор (опрос) |
 | `/auto/result` | Результат автоподбора |
 | `/profile` | Профиль (по умолчанию первый раздел роли) — только авторизованные |
-| `/profile/:tab` | Профиль: клиент — `configs` / `orders` / `reviews`; админ — `admin-users` / `components` / `price-lists`; продавец — `brands` / `price-lists` / `components` — только авторизованные |
+| `/profile/:tab` | Профиль: клиент — `configs` / `orders` / `reviews`; админ — `admin-users` / `components` / `price-lists` / `ready-builds`; продавец — `brands` / `price-lists` / `components` / `ready-builds` — только авторизованные |
 | `/checkout` | Оформление заказа — только `customer` |
 | `/alpha` | Рассрочка 0-0-4 от Альфа-Банка — только `customer` |
 | `/admin` | Администрирование пользователей — только роль `admin` |
@@ -120,7 +123,7 @@ API через Vite-прокси `/api → http://localhost:8787`.
 
 | Команда | Действие |
 | --- | --- |
-| `npm run db:init` | Создать `db/confi.db` со схемой + миграцией (идемпотентно, `user_version=7`) |
+| `npm run db:init` | Создать `db/confi.db` со схемой + миграцией (идемпотентно, `user_version=8`) |
 | `npm run db:seed` | Seed каталога/готовых ПК/отзывов/ролей из `src/data/mock.ts` (пересоздаёт каталог) |
 | `npm run db:import <export.json>` | Импорт данных из устаревшего localStorage-экспорта `alfagen:` (батчинг, quarantine) |
 | `npm run db:backup` | Резервная копия `db/confi.db` в `db/backups/` |
@@ -133,7 +136,7 @@ API через Vite-прокси `/api → http://localhost:8787`.
 `src/data/mock.ts` напрямую (Node 24 native type-stripping), валидирует каждую
 запись и пишет битые строки в `db/quarantine-*.log`.
 
-**Миграция схемы:** `db/schema.sql` — источник DDL (`user_version=7`). В `db/migrate.ts`
+**Миграция схемы:** `db/schema.sql` — источник DDL (`user_version=8`). В `db/migrate.ts`
 — идемпотентные миграции:
 - `migrateUserAccount` — пересоздание `user_account` с новым CHECK роли
   (`'guest'` убрана, добавлены `seller`/`admin`) и колонкой `company`
@@ -152,6 +155,10 @@ API через Vite-прокси `/api → http://localhost:8787`.
   `config_part.price_kopecks` (заполняется JOIN-ом из старой `part.price_kopecks` до
   удаления колонки) и `seller_id` в `config` / `ready_pc` (все существующие строки →
   `usr-seller`). Пересоздаёт `part`/`config_part`/`config`/`ready_pc` по рецепту FK-off.
+- `migrateConfigReadyLink` (v8) — добавляет в `config` колонку **`ready_pc_id`**
+  (FK → `ready_pc` `ON DELETE SET NULL`), чтобы сохранённая `source='ready'`
+  конфигурация знала исходную сборку и помечалась недоступной при её архивации.
+  Пересоздаёт `config` по рецепту FK-off; существующие строки получают `ready_pc_id = NULL`.
 
 Все миграции вызываются из `db:init`, `db:seed`, `src/server/db.ts` и тестовой инициализации.
 
@@ -161,8 +168,10 @@ API через Vite-прокси `/api → http://localhost:8787`.
   `part.compat`); `?includeInactive=1` возвращает и деактивированные (только `seller`/`admin`);
   при `sellerId` к деталям подставляются цены из активного прайс-листа продавца
 - `GET /api/parts/:id[?sellerId=]` — один активный компонент (с ценой прайса при `sellerId`)
-- `GET /api/ready[?sellerId=]`, `GET /api/ready/:id[?sellerId=]` — готовые ПК выбранного продавца,
-  пересчитанные по его активному прайс-листу (сумма цен состава)
+- `GET /api/ready[?sellerId=][&valid=1]`, `GET /api/ready/:id[?sellerId=]` — готовые ПК выбранного продавца,
+  пересчитанные по его активному прайс-листу (сумма цен состава); `valid=1` возвращает только
+  валидные (8 orderable-слотов) сборки; в DTO — `valid`, `sellerId`, `archived`, `specs` (при пустых
+  генерируются из состава)
 - `GET /api/sellers` — список продавцов (id, name, company) для селектора каталога
 - `GET /api/vendors` — список вендоров (торговых марок)
 - `POST /api/components` — создать компонент (роль `seller`/`admin`; `vendor` — название, upsert в `vendor`)
@@ -186,7 +195,14 @@ API через Vite-прокси `/api → http://localhost:8787`.
   - `DELETE /api/seller/:id/price-lists/:listId/items/:partId` — удалить позицию
   - `GET /api/seller/:id/price-lists/:listId/items/missing[?includeInactive=]` — отсутствующие в прайсе детали (мультивыбор)
   - `POST /api/seller/:id/price-lists/:listId/items/bulk` — массовое добавление выбранных (`{ partIds }`, цена 0)
-- `GET/PUT/DELETE /api/configs[/:id]` — сборки (`?userId=`; запись — только `customer`); кастом/auto возвращают снимок цены + актуальную (`price`/`currentPrice`), ready — живые цены
+- Готовые конфигурации продавца (владелец или `admin`):
+  - `GET /api/seller/:id/ready` — список сборок продавца, включая архивные (`archived: true`)
+  - `GET /api/seller/:id/ready/:buildId` — одна сборка (в т. ч. архивная)
+  - `POST /api/seller/:id/ready` — создать (`{ brand, model, parts: [{ category, partId }] }`; проверки: бренд принадлежит продавцу → `400 invalid_brand`, полный состав 8 orderable-позиций → `400 invalid_build`, уникальность модели → `409 model_exists`)
+  - `PUT /api/seller/:id/ready/:buildId` — изменить состав/название (без `parts` сохраняются прежние цена/TDP)
+  - `DELETE /api/seller/:id/ready/:buildId` — архивировать (мягкое удаление, `is_active=0`; чужую сборку не найти → `404`)
+  - `POST /api/seller/:id/ready/:buildId/reactivate` — восстановить из архива (при конфликте модели → `409`)
+- `GET/PUT/DELETE /api/configs[/:id]` — сборки (`?userId=`; запись — только `customer`); кастом/auto возвращают снимок цены + актуальную (`price`/`currentPrice`), ready — живые цены и `readyPcId`; для `source=ready` при архивации исходной сборки или недоступности слота выставляется `buildInvalid=true`
 - `GET/PUT/DELETE /api/orders[/:id]` — заказы (запись — только `customer`)
 - `GET/PUT /api/reviews[/:id]` (`?entityId=`) — отзывы (запись — только `customer`)
 - `GET/PATCH /api/settings` — настройки
@@ -223,7 +239,9 @@ config, order, review, user, seller, vendor, app-state). Браузерная ч
 «недоступен для заказа». У сохранённых кастомных/auto-конфигураций хранится
 **снимок цены** в `config_part.price_kopecks` (сравнивается с актуальной по правилу
 ±5%); `config.seller_id` и `ready_pc.seller_id` указывают на продавца, из прайса которого
-собрана/привязана сборка (по умолчанию ConfiГУРА — `usr-seller`).
+собрана/привязана сборка (по умолчанию ConfiГУРА — `usr-seller`). У `config` есть
+`ready_pc_id` — исходная готовая сборка для `source=ready` (для пометки `buildInvalid`
+после её архивации).
 
 **Роли:** колонка `user_account.role` — `'customer' | 'seller' | 'admin'` (плюс
 аноним вне записей = «Гость»). У клиента есть и e-mail, и телефон; у продавца и
@@ -478,6 +496,40 @@ config, order, review, user, seller, vendor, app-state). Браузерная ч
   готовой сборки в профиле. `ready-filters.spec.ts` обновлён под живую переоценку готовых.
   `testDb.ts` сидит активный прайс-лист ConfiГУРЕ со всеми деталями.
 
+### Готовые конфигурации продавца
+
+- **Схема `db/schema.sql` → `user_version=8`.** В `config` добавлена колонка **`ready_pc_id`**
+  (FK → `ready_pc` `ON DELETE SET NULL`). Новая идемпотентная миграция
+  **`migrateConfigReadyLink`** пересоздаёт `config` по рецепту FK-off; существующие строки
+  получают `ready_pc_id = NULL`. Вызывается из `db:init`, `db:seed`, `src/server/db.ts`,
+  `tests/helpers/testDb.ts`.
+- **DAO (`catalog.ts`).** `ReadyPcDto` получил `valid` (8 слотов + orderable-позиции активного
+  прайса), `sellerId`, `archived`; новый хелпер `isPartOrderable`. Добавлены
+  `listReadyPcsIncludeInactive`, `getReadyPcAny`, `createReadyBuild`, `updateReadyBuild`,
+  `deactivateReadyPc`, `reactivateReadyPc`, `readyModelExists` (уникальность **модели**
+  регистронезависимо, только активные). `readyPcWithParts` считает валидность/цены по прайсу
+  собственного продавца сборки и **деривирует `specs`** из состава, если они пусты
+  (`deriveBuildSpecs`). Новой сборке при создании проставляется `rating=0`.
+- **API (`src/server/index.ts`).** Гвард `readyBuildActor` (владелец или `admin`),
+  маршруты `GET/POST /api/seller/:id/ready`, `GET/PUT/DELETE /api/seller/:id/ready/:buildId`,
+  `POST …/reactivate`; валидация `invalid_brand`/`invalid_build` (включая соответствие
+  категории слота)/`model_exists`; `DELETE` проверяет принадлежность сборки продавцу (нет «чужих»
+  архивов). Публичный `GET /api/ready?valid=1` отдаёт только валидные.
+- **Клиент.** Экран **`ProfileReadyBuilds.tsx`** (вкладка «Готовые конфигурации» у
+  `seller`/`admin`, у админа — селектор продавца): активные + архив, создание/редактирование
+  через `ComponentPicker`, «В архив»/«Восстановить», бейдж «Невалидна». `api.ts` —
+  `fetchSellerReadyBuilds`/`createSellerReadyBuild`/`updateSellerReadyBuild`/
+  `deleteSellerReadyBuild`/`reactivateSellerReadyBuild`, `fetchReadyPcs(sellerId, onlyValid)`,
+  `mapReady.valid`; `ReadyPcCard`/`PcCard` при `reviewCount=0` показывают «Пока нет отзывов»,
+  а `PcCard` при `valid=false` скрывает заказ/рассрочку. `isBuildCompleteValid` в
+  `compatibility.ts`. Сохранение из карточки проставляет `readyPcId`.
+- **Недоступность сохранённой сборки.** `user-data.ts` вычисляет `buildInvalid` для
+  `source=ready`: если исходная сборка архивна (`is_active≠1`/удалена) **или** слот недоступен.
+  В профиле — бейдж «Сборка недоступна для заказа». **Заказы не меняются** (снимок `order_item`).
+- **Тесты.** `tests/regression/ready-builds.spec.ts` (15 сценариев), юнит-обновления
+  `isBuildCompleteValid`/`isConfigComplete`. Seed не перезаписывает `is_active`/`name`/
+  `price_kopecks`/`tdp_watt`/`summary` существующих `ready_pc` (архив/правки продавца переживают рестарт).
+
 ## Автотесты и покрытие (процесс разработки)
 
 Автотесты должны покрывать **100% функционала**. Это достигается двумя
@@ -512,6 +564,10 @@ SMS, гостевой вход), профиль (конфигурации/зак
 пользователей), ролевые ограничения admin/seller (нет покупки/рассрочки/сохранения/
 отзывов, `403` на запись, редиректы `/checkout`/`/alpha`), справочник компонентов
 (создание, деактивация → «недоступен» в сохранённых конфигурациях, переинициализация),
+готовые конфигурации продавца (`tests/regression/ready-builds.spec.ts`: создание из прайса,
+валидность, уникальность модели (в т. ч. при смене бренда), проверка категории слота, запрет
+архивации чужой сборки, архив/восстановление, деривация specs, пометка `buildInvalid`
+сохранённой конфигурации после архивации сборки при неизменности снимка заказа),
 оформление заказа, рассрочка `/alpha`, ручной конфигуратор (выбор компонентов, блокировка
 несовместимых, сохранение), фильтры готовых ПК.
 
@@ -610,7 +666,7 @@ npm run preview
 | `npm run typecheck` | Проверка типов клиента и сервера |
 | `npm run server` | Запуск SQLite API-сервера (`http://localhost:8787`) |
 | `npm run server:dev` | Запуск SQLite API-сервера в watch-режиме |
-| `npm run db:init` | Создание схемы БД + миграция (`user_version=7`) |
+| `npm run db:init` | Создание схемы БД + миграция (`user_version=8`) |
 | `npm run db:seed` | Seed каталога/ролей из `mock.ts` |
 | `npm run db:import` | Импорт из localStorage-экспорта |
 | `npm run db:backup` | Бэкап `confi.db` |

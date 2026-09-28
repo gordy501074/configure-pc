@@ -5,7 +5,7 @@ import Database from "better-sqlite3";
 import { mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { migratePriceLists, migrateSellerBrandDescription, migrateUserAccount, migrateVendorAndAvailability } from "../../db/migrate.ts";
+import { migratePriceLists, migrateSellerBrandDescription, migrateUserAccount, migrateVendorAndAvailability, migrateConfigReadyLink } from "../../db/migrate.ts";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 export const DB_PATH =
@@ -36,6 +36,7 @@ export function openDb(): Database.Database {
   migrateSellerBrandDescription(db);
   migrateVendorAndAvailability(db);
   migratePriceLists(db);
+  migrateConfigReadyLink(db);
 
   cachedDb = db;
   return db;

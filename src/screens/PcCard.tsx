@@ -100,6 +100,7 @@ export default function PcCard() {
   }
 
   const stats = configStats({ parts: pc.parts });
+  const isValid = pc.valid !== false;
   const avgRating =
     reviews.length > 0
       ? reviews.reduce((s, r) => s + r.rating, 0) / reviews.length
@@ -145,6 +146,7 @@ export default function PcCard() {
         source: "ready",
         usage: pc.usage,
         sellerId,
+        readyPcId: pc.id,
       },
       user.id,
     );
@@ -178,11 +180,16 @@ export default function PcCard() {
               </Badge>
               <Badge variant="info">{USAGE_LABELS[pc.usage] ?? pc.usage}</Badge>
               <Badge variant="secondary">TDP {pc.tdp} Вт</Badge>
+              {!isValid ? <Badge variant="destructive">Недоступен для заказа</Badge> : null}
             </div>
             <h1 id="pc-name" className="text-3xl font-bold">
               {pc.name}
             </h1>
-            <StarRating value={avgRating} showValue reviewCount={reviews.length} />
+            {reviews.length > 0 ? (
+              <StarRating value={avgRating} showValue reviewCount={reviews.length} />
+            ) : (
+              <span className="text-sm text-muted-foreground">Пока нет отзывов</span>
+            )}
             <p className="text-muted-foreground">{pc.summary}</p>
           </div>
 
@@ -221,24 +228,30 @@ export default function PcCard() {
               Потребление: {stats.totalTdp} Вт
             </span>
             {isCustomer ? (
-              <>
-                <InstallmentPlan
-                  total={stats.totalPrice}
-                  state={{
-                    orderTitle: pc.name,
-                    line: {
-                      kind: "ready",
-                      refId: pc.id,
-                      name: pc.name,
-                      price: stats.totalPrice,
-                      count: 1,
-                    },
-                  }}
-                />
-                <Button size="lg" onClick={checkout}>
-                  Оформить заказ
-                </Button>
-              </>
+              isValid ? (
+                <>
+                  <InstallmentPlan
+                    total={stats.totalPrice}
+                    state={{
+                      orderTitle: pc.name,
+                      line: {
+                        kind: "ready",
+                        refId: pc.id,
+                        name: pc.name,
+                        price: stats.totalPrice,
+                        count: 1,
+                      },
+                    }}
+                  />
+                  <Button size="lg" onClick={checkout}>
+                    Оформить заказ
+                  </Button>
+                </>
+              ) : (
+                <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                  Сборка недоступна для заказа: состав изменился или позиции сняты с продажи.
+                </div>
+              )
             ) : null}
             <Button variant="secondary" onClick={configureFromTemplate}>
               Настроить в конфигураторе

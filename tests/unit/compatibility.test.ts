@@ -8,6 +8,7 @@ import {
   checkPartCompatibility,
   validateConfig,
   isConfigComplete,
+  isBuildCompleteValid,
   isPartAvailable,
   isPriceStale,
 } from "../../src/lib/compatibility.ts";
@@ -268,6 +269,48 @@ test("isConfigComplete is false when a chosen part is unavailable", () => {
       }),
     ),
     true,
+  );
+});
+
+test("isConfigComplete rejects a zero-priced chosen part", () => {
+  const base = chosen(FULL_SET);
+  assert.equal(
+    isConfigComplete({ ...base, cpu: { ...base.cpu!, priceSet: true, price: 0 } }),
+    false,
+  );
+});
+
+test("isConfigComplete rejects a chosen part without an explicit price", () => {
+  // A raw mock part has `price` but no `priceSet` flag, so it is not orderable.
+  const raw = chosen({ ...FULL_SET, cpu: cat("cpu-r5-5600") });
+  assert.equal(isConfigComplete(raw), false);
+});
+
+test("isBuildCompleteValid requires 8 orderable slots", () => {
+  const full = Object.values(FULL_SET).map((part) => ({ part }));
+  assert.equal(isBuildCompleteValid(full), true);
+  // A missing slot (7 parts) is invalid.
+  assert.equal(isBuildCompleteValid(full.slice(0, 7)), false);
+  // A null slot is invalid.
+  assert.equal(
+    isBuildCompleteValid([{ part: null }, ...full.slice(1)]),
+    false,
+  );
+  // An unavailable part is invalid.
+  assert.equal(
+    isBuildCompleteValid([
+      { part: { ...FULL_SET.cpu, available: false } },
+      ...full.slice(1),
+    ]),
+    false,
+  );
+  // A zero-priced (priceSet) part is invalid.
+  assert.equal(
+    isBuildCompleteValid([
+      { part: { ...FULL_SET.cpu, priceSet: true, price: 0 } },
+      ...full.slice(1),
+    ]),
+    false,
   );
 });
 

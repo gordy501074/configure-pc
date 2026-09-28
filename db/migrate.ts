@@ -492,3 +492,66 @@ export function migratePriceLists(db: Database.Database): void {
     db.pragma("foreign_keys = ON");
   }
 }
+
+// ---- v8: config.ready_pc_id (link a saved ready config to its source build) ----
+
+/** True when `config` already has the `ready_pc_id` column. */
+function configReadyLinkIsMigrated(db: Database.Database): boolean {
+  const cfg = tableSql(db, "config");
+  return !!cfg && /ready_pc_id/i.test(cfg);
+}
+
+/**
+ * Idempotent v8 migration: add `ready_pc_id` to `config` so a saved
+ * `source='ready'` config knows which ready build it came from (used to mark it
+ * unavailable-to-order once that build is archived). Rebuilt via the documented
+ * FK-off recipe because STRICT SQLite cannot alter columns in place.
+ * Existing rows get `ready_pc_id = NULL` (no retroactive link).
+ */
+export function migrateConfigReadyLink(db: Database.Database): void {
+  if (configReadyLinkIsMigrated(db)) return;
+
+  const stamp = `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+  const tmpConfig = `new_config_${stamp}`;
+
+  db.pragma("foreign_keys = OFF");
+  db.pragma("defer_foreign_keys = ON");
+  try {
+    db.transaction(() => {
+      db.exec(`
+        CREATE TABLE ${tmpConfig} (
+          config_id   TEXT PRIMARY KEY,
+          user_id     TEXT NOT NULL,
+          name        TEXT NOT NULL DEFAULT 'Моя сборка',
+          source      TEXT NOT NULL DEFAULT 'custom' CHECK (source IN ('custom','auto','ready')),
+          usage       TEXT CHECK (usage IN ('gaming','work','video','universal')),
+          seller_id   TEXT,
+          ready_pc_id TEXT,
+          created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+          updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+          FOREIGN KEY (user_id) REFERENCES user_account(user_id) ON DELETE CASCADE,
+          FOREIGN KEY (seller_id) REFERENCES user_account(user_id) ON DELETE SET NULL,
+          FOREIGN KEY (ready_pc_id) REFERENCES ready_pc(ready_pc_id) ON DELETE SET NULL
+        ) STRICT
+      `);
+      db.exec(`
+        INSERT INTO ${tmpConfig} (config_id, user_id, name, source, usage, seller_id, ready_pc_id, created_at, updated_at)
+        SELECT config_id, user_id, name, source, usage, seller_id, NULL, created_at, updated_at
+        FROM config
+      `);
+      db.exec(`DROP TABLE config`);
+      db.exec(`ALTER TABLE ${tmpConfig} RENAME TO config`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_config_user_id ON config(user_id)`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_config_updated ON config(updated_at DESC)`);
+    })();
+
+    const integrity = db.exec(`PRAGMA foreign_key_check;`) as unknown as [];
+    if (Array.isArray(integrity) && integrity.length > 0) {
+      throw new Error(
+        `config ready-link migration left FK violations: ${JSON.stringify(integrity)}`,
+      );
+    }
+  } finally {
+    db.pragma("foreign_keys = ON");
+  }
+}

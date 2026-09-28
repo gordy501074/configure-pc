@@ -117,6 +117,12 @@ export interface ReadyPcDto {
   inStock: boolean;
   rating: number;
   reviewCount: number;
+  /** Computed live: all 8 categories present and orderable against the active price list. */
+  valid: boolean;
+  /** Owning seller id (null for legacy/seeded catalog entries). */
+  sellerId: string | null;
+  /** True when this build has been archived (is_active = 0). */
+  archived: boolean;
   /** Parts attached via ready_pc_part, resolved to PartDto. */
   parts: ConfigPartDto[];
 }
@@ -147,6 +153,7 @@ export interface ConfigRow {
   source: ConfigSource;
   usage: Usage | null;
   seller_id: string | null;
+  ready_pc_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -157,8 +164,12 @@ export interface ConfigDto {
   source: ConfigSource;
   usage?: Usage;
   sellerId?: string;
+  /** For source='ready': the ready_pc this config was saved from. */
+  readyPcId?: string;
   createdAt: number;
   updatedAt: number;
+  /** Set only for source=ready: true when a config slot is unavailable/zero-priced or its build is archived. */
+  buildInvalid?: boolean;
   parts: ConfigPartDto[];
 }
 
@@ -296,7 +307,7 @@ export function attachPrice(part: PartDto, priceKopecks: number | null): PartDto
 
 export function readyPcToBaseDto(
   row: ReadyPcRow,
-): Omit<ReadyPcDto, "parts" | "reviewCount"> {
+): Omit<ReadyPcDto, "parts" | "reviewCount" | "valid" | "sellerId"> {
   return {
     id: row.ready_pc_id,
     name: row.name,
@@ -309,7 +320,43 @@ export function readyPcToBaseDto(
     image: row.image_url ?? undefined,
     inStock: row.in_stock === 1,
     rating: row.rating,
+    archived: row.is_active !== 1,
   };
+}
+
+/** Whether a part resolves to an orderable slot (active + positive price in the active list). */
+export function isPartOrderable(part: PartDto | undefined | null): boolean {
+  if (!part) return false;
+  if (part.available !== true) return false;
+  if (part.priceSet !== true) return false;
+  return (part.price ?? 0) > 0;
+}
+
+/** Showcase spec labels per category, in display order. */
+const BUILD_SPEC_LABELS: Array<[ComponentCategory, string]> = [
+  ["cpu", "Процессор"],
+  ["gpu", "Видеокарта"],
+  ["ram", "Память"],
+  ["storage", "Накопитель"],
+  ["motherboard", "Материнская плата"],
+  ["psu", "Блок питания"],
+];
+
+/**
+ * Derive the showcase spec rows (Процессор/Видеокарта/Память/…) from a build's
+ * composition. Used when creating a build and as a read-time fallback for
+ * builds persisted before specs were generated.
+ */
+export function deriveBuildSpecs(
+  parts: Array<{ category: ComponentCategory; part: PartDto | null }>,
+): SpecItem[] {
+  const byCategory = new Map(parts.map((p) => [p.category, p.part]));
+  const specs: SpecItem[] = [];
+  for (const [category, label] of BUILD_SPEC_LABELS) {
+    const part = byCategory.get(category);
+    if (part) specs.push({ label, value: part.name });
+  }
+  return specs;
 }
 
 export function reviewToDto(row: ReviewRow): ReviewDto {
@@ -327,6 +374,7 @@ export function reviewToDto(row: ReviewRow): ReviewDto {
 export function configToDto(
   row: ConfigRow,
   parts: ConfigPartDto[],
+  buildInvalid?: boolean,
 ): ConfigDto {
   return {
     id: row.config_id,
@@ -334,8 +382,10 @@ export function configToDto(
     source: row.source,
     usage: row.usage ?? undefined,
     sellerId: row.seller_id ?? undefined,
+    readyPcId: row.ready_pc_id ?? undefined,
     createdAt: Date.parse(row.created_at),
     updatedAt: Date.parse(row.updated_at),
+    buildInvalid: buildInvalid,
     parts,
   };
 }

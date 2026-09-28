@@ -14,7 +14,9 @@ import { createAnalyticsRepository, type AnalyticsEvent } from "./repository/ana
 import { createPriceListRepository } from "./repository/price-list.ts";
 import { openDb } from "./db.ts";
 import type { SaveConfigInput, SaveOrderInput, SaveReviewInput } from "./repository/user-data.ts";
-import type { ComponentCategory, PartCompat, SpecItem, UserRole } from "./repository/types.ts";
+import type { CatalogRepository } from "./repository/catalog.ts";
+import type { ComponentCategory, PartCompat, PartDto, SpecItem, Usage, UserRole } from "./repository/types.ts";
+import { isPartOrderable, deriveBuildSpecs } from "./repository/types.ts";
 import { components } from "../data/mock.ts";
 
 const app = express();
@@ -150,7 +152,9 @@ app.get("/api/parts/:id", (req, res) => {
 app.get("/api/ready", (req, res) => {
   const sellerId =
     typeof req.query.sellerId === "string" ? req.query.sellerId : undefined;
-  res.json(catalog.listReadyPcs(sellerId));
+  const onlyValid = req.query.valid === "1";
+  const list = catalog.listReadyPcs(sellerId);
+  res.json(onlyValid ? list.filter((pc) => pc.valid) : list);
 });
 
 app.get("/api/ready/:id", (req, res) => {
@@ -461,6 +465,199 @@ app.delete("/api/seller/:id/brands/:brand", (req, res) => {
   res.status(204).end();
 });
 
+// ---- Ready builds (owner or admin, via a ComponentPicker-like tool) ----
+
+interface PartRef {
+  category: ComponentCategory;
+  partId: string;
+}
+
+function readyBuildActor(
+  req: express.Request,
+  res: express.Response,
+): { actor: { userId: string; role: UserRole }; sellerId: string } | null {
+  const actor = actorRole(req);
+  if (!actor) {
+    res.status(403).json({ error: "unauthorized" });
+    return null;
+  }
+  if (actor.role !== "admin" && actor.userId !== req.params.id) {
+    res.status(403).json({ error: "forbidden" });
+    return null;
+  }
+  return { actor, sellerId: String(req.params.id) };
+}
+
+/** Parse { brand, model, parts: PartRef[] } from a request body (loose). */
+function parseReadyBuildBody(
+  body: Record<string, unknown>,
+): { brand: string; model: string; parts: PartRef[] } | { error: string } {
+  const brand = String(body.brand ?? "").trim();
+  const model = String(body.model ?? "").trim();
+  if (!brand) return { error: "brand required" };
+  if (!model) return { error: "model required" };
+  const rawParts = body.parts;
+  if (!Array.isArray(rawParts)) return { error: "invalid_build" };
+  const parts: PartRef[] = [];
+  for (const raw of rawParts) {
+    const r = raw as { category?: unknown; partId?: unknown };
+    if (typeof r?.category !== "string" || typeof r?.partId !== "string") {
+      return { error: "invalid_build" };
+    }
+    parts.push({ category: r.category as ComponentCategory, partId: r.partId });
+  }
+  return { brand, model, parts };
+}
+
+/** Sum of active-list prices for a build composition (rubles). */
+function buildPrice(
+  sellerId: string,
+  parts: PartRef[],
+): { price: number; tdp: number } {
+  let price = 0;
+  let tdp = 0;
+  for (const ref of parts) {
+    const part = catalog.getPart(ref.partId, sellerId);
+    if (part?.price !== undefined) price += part.price;
+    if (part) tdp += part.tdp;
+  }
+  return { price, tdp };
+}
+
+/** Derive showcase spec rows (Процессор/Видеокарта/Память/…) from a build composition. */
+function buildSpecs(sellerId: string, parts: PartRef[]): SpecItem[] {
+  return deriveBuildSpecs(
+    parts.map((p) => ({ category: p.category, part: catalog.getPart(p.partId, sellerId) })),
+  );
+}
+
+app.get("/api/seller/:id/ready", (req, res) => {
+  const ctx = readyBuildActor(req, res);
+  if (!ctx) return;
+  res.json(catalog.listReadyPcsIncludeInactive(ctx.sellerId));
+});
+
+app.get("/api/seller/:id/ready/:buildId", (req, res) => {
+  const ctx = readyBuildActor(req, res);
+  if (!ctx) return;
+  const pc = catalog.getReadyPcAny(req.params.buildId, ctx.sellerId);
+  if (!pc) return res.status(404).json({ error: "build not found" });
+  res.json(pc);
+});
+
+app.post("/api/seller/:id/ready", (req, res) => {
+  const ctx = readyBuildActor(req, res);
+  if (!ctx) return;
+  const parsed = parseReadyBuildBody((req.body ?? {}) as Record<string, unknown>);
+  if ("error" in parsed) return res.status(400).json({ error: parsed.error });
+  const { brand, model, parts } = parsed;
+
+  const brandOwned = sellerRepo.listSellerBrands(ctx.sellerId).some((b) => b.brand === brand);
+  if (!brandOwned) return res.status(400).json({ error: "invalid_brand" });
+
+  const buildErr = validateBuildParts(catalog, ctx.sellerId, parts);
+  if (buildErr) return res.status(400).json({ error: buildErr });
+
+  const name = composeBuildName(brand, model);
+  if (catalog.readyModelExists(ctx.sellerId, brand, model)) {
+    return res.status(409).json({ error: "model_exists" });
+  }
+
+  const { price, tdp } = buildPrice(ctx.sellerId, parts);
+  const created = catalog.createReadyBuild({
+    name,
+    brand,
+    usage: "universal",
+    tdp,
+    price,
+    summary: `Готовая конфигурация ${name}`,
+    specs: buildSpecs(ctx.sellerId, parts),
+    sellerId: ctx.sellerId,
+    parts,
+  });
+  res.status(201).json(created);
+});
+
+app.put("/api/seller/:id/ready/:buildId", (req, res) => {
+  const ctx = readyBuildActor(req, res);
+  if (!ctx) return;
+  const existing = catalog.getReadyPcAny(req.params.buildId, ctx.sellerId);
+  if (!existing) return res.status(404).json({ error: "build not found" });
+
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const brand = typeof body.brand === "string" ? body.brand.trim() : undefined;
+  const model = typeof body.model === "string" ? body.model.trim() : undefined;
+  const rawParts = Array.isArray(body.parts) ? body.parts : undefined;
+  const parts = rawParts
+    ? (rawParts as { category?: unknown; partId?: unknown }[])
+        .filter((r) => typeof r?.category === "string" && typeof r?.partId === "string")
+        .map((r) => ({ category: r.category as ComponentCategory, partId: r.partId as string }))
+    : undefined;
+
+  if (brand !== undefined) {
+    const brandOwned = sellerRepo.listSellerBrands(ctx.sellerId).some((b) => b.brand === brand);
+    if (!brandOwned) return res.status(400).json({ error: "invalid_brand" });
+  }
+
+  const nextBrand = brand ?? existing.brand;
+  const nextModel = model !== undefined ? model : modelFromBuildName(existing.name, existing.brand);
+  if (!nextModel) return res.status(400).json({ error: "model required" });
+
+  if (parts) {
+    if (parts.length !== 8) return res.status(400).json({ error: "invalid_build" });
+    const buildErr = validateBuildParts(catalog, ctx.sellerId, parts);
+    if (buildErr) return res.status(400).json({ error: buildErr });
+  }
+
+  const resultBrand = nextBrand;
+  const resultName = composeBuildName(resultBrand, nextModel);
+  // Uniqueness against other active builds (exclude self), by model only.
+  if (catalog.readyModelExists(ctx.sellerId, resultBrand, nextModel, existing.id)) {
+    return res.status(409).json({ error: "model_exists" });
+  }
+
+  const effectiveParts = parts ?? existing.parts
+    .filter((cp): cp is { category: ComponentCategory; part: NonNullable<typeof cp.part> } => !!cp.part)
+    .map((cp) => ({ category: cp.category, partId: cp.part!.id }));
+
+  // Only recompute price/tdp when the composition changes; a rename/brand-only
+  // update preserves the stored values (some slots may be temporarily unpriced).
+  const priceTdp = parts ? buildPrice(ctx.sellerId, effectiveParts) : undefined;
+
+  const updated = catalog.updateReadyBuild(existing.id, {
+    name: resultName,
+    brand: resultBrand,
+    ...(priceTdp ? { price: priceTdp.price, tdp: priceTdp.tdp } : {}),
+    summary: `Готовая конфигурация ${resultName}`,
+    ...(parts ? { specs: buildSpecs(ctx.sellerId, effectiveParts) } : {}),
+    parts: parts ? effectiveParts : undefined,
+  });
+  if (!updated) return res.status(404).json({ error: "build not found" });
+  res.json(updated);
+});
+
+app.delete("/api/seller/:id/ready/:buildId", (req, res) => {
+  const ctx = readyBuildActor(req, res);
+  if (!ctx) return;
+  const existing = catalog.getReadyPcAny(req.params.buildId, ctx.sellerId);
+  if (!existing) return res.status(404).json({ error: "build not found" });
+  catalog.deactivateReadyPc(existing.id);
+  res.status(204).end();
+});
+
+app.post("/api/seller/:id/ready/:buildId/reactivate", (req, res) => {
+  const ctx = readyBuildActor(req, res);
+  if (!ctx) return;
+  const existing = catalog.getReadyPcAny(req.params.buildId, ctx.sellerId);
+  if (!existing) return res.status(404).json({ error: "build not found" });
+  const model = modelFromBuildName(existing.name, existing.brand);
+  if (catalog.readyModelExists(ctx.sellerId, existing.brand, model, existing.id)) {
+    return res.status(409).json({ error: "model_exists" });
+  }
+  catalog.reactivateReadyPc(existing.id);
+  res.json(catalog.getReadyPcAny(existing.id, ctx.sellerId));
+});
+
 // ---- Vendors & components (seller/admin) ----
 
 const CATEGORIES: ComponentCategory[] = [
@@ -524,6 +721,56 @@ function modelFromName(name: string, vendorName: string): string {
     return n.slice(v.length).trim();
   }
   return n;
+}
+
+/** Compose a ready build's full name from a seller brand and a model, e.g. "Confi Gaming 1440p". */
+function composeBuildName(brand: string, model: string): string {
+  const b = String(brand ?? "").trim();
+  const m = String(model ?? "").trim();
+  if (b && m) return `${b} ${m}`;
+  return b || m;
+}
+
+/** Recover the model suffix from a full build name and its brand: "Confi Gaming 1440p" -> "Gaming 1440p". */
+function modelFromBuildName(name: string, brand: string): string {
+  const n = String(name ?? "").trim();
+  const b = String(brand ?? "").trim();
+  if (!b) return n;
+  if (n.toLowerCase().startsWith(b.toLowerCase())) {
+    return n.slice(b.length).trim();
+  }
+  return n;
+}
+
+/** True when the slot is orderable (active part with a positive price in the active list). */
+function activePriceOk(part: PartDto | undefined | null): boolean {
+  return isPartOrderable(part);
+}
+
+const VALID_BUILD_CATEGORIES: ComponentCategory[] = [
+  "cpu",
+  "gpu",
+  "motherboard",
+  "ram",
+  "storage",
+  "case",
+  "psu",
+  "cooler",
+];
+
+/** Validate a PartRef[] build composition: exactly all 8 categories with orderable parts in the active price list. */
+function validateBuildParts(catalog: CatalogRepository, sellerId: string, parts: PartRef[]): string | null {
+  const cats = new Set(parts.map((p) => p.category));
+  if (parts.length !== 8 || cats.size !== 8) return "invalid_build";
+  for (const cat of VALID_BUILD_CATEGORIES) {
+    if (!cats.has(cat)) return "invalid_build";
+  }
+  for (const ref of parts) {
+    const part = catalog.getPart(ref.partId, sellerId);
+    if (!activePriceOk(part)) return "invalid_build";
+    if (part!.category !== ref.category) return "invalid_build";
+  }
+  return null;
 }
 
 app.post("/api/components", (req, res) => {

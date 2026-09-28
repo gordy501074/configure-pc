@@ -49,7 +49,7 @@ export default function ReadyPCs() {
   useEffect(() => {
     setLoadState("loading");
     let cancelled = false;
-    fetchReadyPcs(sellerId).then((list) => {
+    fetchReadyPcs(sellerId, true).then((list) => {
       if (cancelled) return;
       setPcs(list);
       setLoadState("done");

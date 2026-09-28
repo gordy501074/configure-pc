@@ -100,6 +100,10 @@ export interface Config {
   source: "custom" | "auto" | "ready";
   usage?: Usage;
   sellerId?: string;
+  /** For source=ready: the ready_pc this config was saved from. */
+  readyPcId?: string;
+  /** Set only for source=ready: true when the saved ready build is currently invalid (a slot is unavailable/zero-priced, or the build is archived). */
+  buildInvalid?: boolean;
 }
 
 export interface ReadyPc {
@@ -116,6 +120,12 @@ export interface ReadyPc {
   inStock: boolean;
   rating: number;
   reviewCount: number;
+  /** Computed live by the server: all 8 slots orderable against the seller's active price list. */
+  valid?: boolean;
+  /** Owning seller id. */
+  sellerId?: string;
+  /** True when the build has been archived (soft-deleted). */
+  archived?: boolean;
 }
 
 export interface Review {

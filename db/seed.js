@@ -9,7 +9,7 @@ import { readFileSync, appendFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { components, readyPcs, seededReviews } from "../src/data/mock.ts";
-import { migratePriceLists, migrateSellerBrandDescription, migrateUserAccount, migrateVendorAndAvailability } from "./migrate.ts";
+import { migratePriceLists, migrateSellerBrandDescription, migrateUserAccount, migrateVendorAndAvailability, migrateConfigReadyLink } from "./migrate.ts";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const DB_PATH = join(root, "db", "confi.db");
@@ -55,6 +55,7 @@ migrateUserAccount(db);
 migrateSellerBrandDescription(db);
 migrateVendorAndAvailability(db);
 migratePriceLists(db);
+migrateConfigReadyLink(db);
 
 /** Validate a single part row; returns null to skip. */
 function validatePart(p) {
@@ -132,11 +133,10 @@ const insertReady = db.prepare(`
   INSERT INTO ready_pc (ready_pc_id, name, brand, usage, price_kopecks, tdp_watt, summary, specs_json, image_url, in_stock, rating, is_active, seller_id)
   VALUES (@id, @name, @brand, @usage, @price_kopecks, @tdp_watt, @summary, @specs_json, @image_url, @in_stock, @rating, 1, @seller_id)
   ON CONFLICT(ready_pc_id) DO UPDATE SET
-    name=excluded.name, brand=excluded.brand, usage=excluded.usage,
-    price_kopecks=excluded.price_kopecks, tdp_watt=excluded.tdp_watt,
-    summary=excluded.summary, specs_json=excluded.specs_json,
+    brand=excluded.brand, usage=excluded.usage,
+    specs_json=excluded.specs_json,
     image_url=excluded.image_url, in_stock=excluded.in_stock,
-    rating=excluded.rating, seller_id=excluded.seller_id, is_active=1
+    seller_id=excluded.seller_id
 `);
 
 const insertPriceList = db.prepare(`

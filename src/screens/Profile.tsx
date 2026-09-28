@@ -36,8 +36,9 @@ import type { Config, Order, Review, SellerBrand } from "../types";
 import Admin from "./Admin";
 import { ProfileComponents } from "./ProfileComponents";
 import { ProfilePriceLists } from "./ProfilePriceLists";
+import { ProfileReadyBuilds } from "./ProfileReadyBuilds";
 
-type Tab = "configs" | "orders" | "reviews" | "admin-users" | "brands" | "components" | "price-lists";
+type Tab = "configs" | "orders" | "reviews" | "admin-users" | "brands" | "components" | "price-lists" | "ready-builds";
 
 interface TabDef {
   key: Tab;
@@ -50,6 +51,7 @@ function tabsForRole(role: string): TabDef[] {
       { key: "admin-users", label: "Администрирование пользователей" },
       { key: "components", label: "Компоненты" },
       { key: "price-lists", label: "Прайс-листы" },
+      { key: "ready-builds", label: "Готовые конфигурации" },
     ];
   }
   if (role === "seller") {
@@ -57,6 +59,7 @@ function tabsForRole(role: string): TabDef[] {
       { key: "brands", label: "Бренды" },
       { key: "price-lists", label: "Прайс-листы" },
       { key: "components", label: "Компоненты" },
+      { key: "ready-builds", label: "Готовые конфигурации" },
     ];
   }
   return [
@@ -357,6 +360,9 @@ export default function Profile() {
                       <Badge variant="info">{sourceLabel(c.source)}</Badge>
                       <span className="font-medium">{formatPrice(s.totalPrice)}</span>
                       <span className="text-muted-foreground">{s.totalTdp} Вт</span>
+                      {c.source === "ready" && c.buildInvalid ? (
+                        <Badge variant="destructive">Сборка недоступна для заказа</Badge>
+                      ) : null}
                       {c.source !== "ready" &&
                       c.parts.some(
                         (cp) =>
@@ -473,6 +479,8 @@ export default function Profile() {
         <ProfileComponents isAdmin={user?.role === "admin"} />
       ) : activeTab === "price-lists" ? (
         <ProfilePriceLists sellerId={user.id} isAdmin={user?.role === "admin"} />
+      ) : activeTab === "ready-builds" ? (
+        <ProfileReadyBuilds sellerId={user.id} isAdmin={user?.role === "admin"} />
       ) : activeTab === "brands" ? (
         <section aria-label="Бренды" className="flex flex-col gap-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
