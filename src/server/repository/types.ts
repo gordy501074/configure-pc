@@ -1,5 +1,9 @@
 // Server-side domain types, mirroring src/types/index.ts but against the SQLite schema.
 
+import type { InstallmentDecision, PaymentMethod } from "../../lib/orderStatus.ts";
+
+export type { InstallmentDecision, PaymentMethod };
+
 export type ComponentCategory =
   | "cpu"
   | "gpu"
@@ -211,6 +215,8 @@ export interface OrderRow {
   user_id: string;
   total_kopecks: number;
   status: OrderStatus;
+  payment_method: PaymentMethod;
+  installment_decision: InstallmentDecision | null;
   address: string;
   user_name: string;
   created_at: string;
@@ -222,6 +228,8 @@ export interface OrderDto {
   items: OrderItemDto[];
   total: number;
   status: OrderStatus;
+  paymentMethod: PaymentMethod;
+  installmentDecision: InstallmentDecision | null;
   address: string;
   userName: string;
 }
@@ -404,6 +412,8 @@ export function orderToDto(
     items,
     total: row.total_kopecks / 100,
     status: row.status,
+    paymentMethod: row.payment_method,
+    installmentDecision: row.installment_decision ?? null,
     address: row.address,
     userName: row.user_name,
   };

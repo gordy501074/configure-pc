@@ -8,12 +8,14 @@ import type {
   ConfigPartDto,
   ConfigRow,
   ConfigSource,
+  InstallmentDecision,
   OrderDto,
   OrderItemDto,
   OrderItemRow,
   OrderRow,
   OrderStatus,
   PartRow,
+  PaymentMethod,
   ReadyPcRow,
   ReviewDto,
   ReviewRow,
@@ -40,6 +42,7 @@ export interface SaveOrderInput {
   id: string;
   user_id: string;
   status: OrderStatus;
+  paymentMethod?: PaymentMethod;
   address: string;
   userName: string;
   items: OrderItemDto[];
@@ -109,6 +112,10 @@ export interface UserDataRepository {
   getOrderStatus(orderId: string): OrderStatus | null;
   /** Set the whole order's status; false when the order does not exist. */
   setOrderStatus(orderId: string, status: OrderStatus): boolean;
+  /** Set the installment decision snapshot; false when the order does not exist. */
+  setInstallmentDecision(orderId: string, decision: InstallmentDecision): boolean;
+  /** Set the payment method; false when the order does not exist. */
+  setOrderPaymentMethod(orderId: string, method: PaymentMethod): boolean;
 
   // reviews
   listReviews(): ReviewDto[];
@@ -198,10 +205,11 @@ export function createUserRepository(db: Database): UserDataRepository {
     `SELECT * FROM order_header WHERE order_id = ?`,
   );
   const upsertOrderStmt = db.prepare(
-    `INSERT INTO order_header (order_id, user_id, total_kopecks, status, address, user_name, created_at)
-     VALUES (@id, @user_id, @total_kopecks, @status, @address, @user_name, @created_at)
+    `INSERT INTO order_header (order_id, user_id, total_kopecks, status, payment_method, installment_decision, address, user_name, created_at)
+     VALUES (@id, @user_id, @total_kopecks, @status, @payment_method, @installment_decision, @address, @user_name, @created_at)
      ON CONFLICT(order_id) DO UPDATE SET
        user_id=excluded.user_id, total_kopecks=excluded.total_kopecks, status=excluded.status,
+       payment_method=excluded.payment_method, installment_decision=excluded.installment_decision,
        address=excluded.address, user_name=excluded.user_name`,
   );
   const cancelOrderStmt = db.prepare(
@@ -235,6 +243,12 @@ export function createUserRepository(db: Database): UserDataRepository {
   );
   const setOrderStatusStmt = db.prepare(
     `UPDATE order_header SET status = ? WHERE order_id = ?`,
+  );
+  const setInstallmentDecisionStmt = db.prepare(
+    `UPDATE order_header SET installment_decision = ? WHERE order_id = ?`,
+  );
+  const setOrderPaymentMethodStmt = db.prepare(
+    `UPDATE order_header SET payment_method = ? WHERE order_id = ?`,
   );
 
   // --- reviews ---
@@ -574,12 +588,25 @@ export function createUserRepository(db: Database): UserDataRepository {
         0,
       );
       const existing = getOrderStmt.get(input.id) as OrderRow | undefined;
+      // Existing orders keep their stored payment fields (mirrors status handling);
+      // new orders derive them from the input or the created status.
+      const paymentMethod: PaymentMethod =
+        existing?.payment_method ??
+        input.paymentMethod ??
+        (input.status === "alpha" ? "installment" : "full");
+      const installmentDecision: InstallmentDecision | null = existing
+        ? existing.installment_decision
+        : input.status === "alpha"
+          ? "pending"
+          : null;
       const transaction = db.transaction(() => {
         upsertOrderStmt.run({
           id: input.id,
           user_id: input.user_id,
           total_kopecks: total,
           status: input.status,
+          payment_method: paymentMethod,
+          installment_decision: installmentDecision,
           address: input.address,
           user_name: input.userName,
           created_at: existing?.created_at ?? now(),
@@ -652,6 +679,16 @@ export function createUserRepository(db: Database): UserDataRepository {
 
     setOrderStatus(orderId, status) {
       const info = setOrderStatusStmt.run(status, orderId);
+      return info.changes > 0;
+    },
+
+    setInstallmentDecision(orderId, decision) {
+      const info = setInstallmentDecisionStmt.run(decision, orderId);
+      return info.changes > 0;
+    },
+
+    setOrderPaymentMethod(orderId, method) {
+      const info = setOrderPaymentMethodStmt.run(method, orderId);
       return info.changes > 0;
     },
 

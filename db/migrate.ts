@@ -756,3 +756,79 @@ export function migrateConfigReadyLink(db: Database.Database): void {
     db.pragma("foreign_keys = ON");
   }
 }
+
+/**
+ * True when `order_header` already has BOTH v11 columns. The schema is created
+ * with `CREATE TABLE IF NOT EXISTS`, so an existing table is only upgraded by
+ * this migration; requiring both columns (not just `payment_method`) avoids
+ * skipping a partially-migrated DB that would later break the installment query.
+ */
+function orderHeaderHasPaymentMethod(db: Database.Database): boolean {
+  const cols = tableColumns(db, "order_header");
+  return cols.has("payment_method") && cols.has("installment_decision");
+}
+
+/**
+ * Idempotent v11 migration: add `payment_method` and `installment_decision` to
+ * `order_header` (installment analytics requires knowing whether an order was
+ * placed via the Alpha-Bank installment form and how it was decided). SQLite
+ * cannot add a column with a CHECK constraint in place, so the table is rebuilt
+ * via the documented FK-off recipe (CREATE temp -> INSERT -> DROP -> RENAME) and
+ * verified with `PRAGMA foreign_key_check`.
+ *
+ * Best-effort backfill:
+ *  - `payment_method = 'installment'` for rows in `alpha` / `alpha_rejected`,
+ *    `'full'` otherwise;
+ *  - `installment_decision = 'pending'` for `alpha`, `'rejected'` for
+ *    `alpha_rejected`, NULL otherwise. Installments approved before this
+ *    migration cannot be recovered and stay NULL.
+ */
+export function migrateOrderPaymentMethod(db: Database.Database): void {
+  if (orderHeaderHasPaymentMethod(db)) return;
+
+  const stamp = `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+  const tmpHeader = `new_order_header_${stamp}`;
+
+  db.pragma("foreign_keys = OFF");
+  db.pragma("defer_foreign_keys = ON");
+  try {
+    db.transaction(() => {
+      db.exec(`
+        CREATE TABLE ${tmpHeader} (
+          order_id      TEXT PRIMARY KEY,
+          user_id       TEXT NOT NULL,
+          total_kopecks INTEGER NOT NULL CHECK (total_kopecks >= 0),
+          status        TEXT NOT NULL DEFAULT 'new' CHECK (status IN ('new','confirmed','delivery','done','alpha','alpha_rejected','cancelled')),
+          payment_method       TEXT NOT NULL DEFAULT 'full' CHECK (payment_method IN ('full','installment')),
+          installment_decision TEXT CHECK (installment_decision IN ('pending','approved','rejected')),
+          address       TEXT NOT NULL,
+          user_name     TEXT NOT NULL,
+          created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+          FOREIGN KEY (user_id) REFERENCES user_account(user_id) ON DELETE RESTRICT
+        ) STRICT
+      `);
+      db.exec(`
+        INSERT INTO ${tmpHeader} (order_id, user_id, total_kopecks, status, payment_method, installment_decision, address, user_name, created_at)
+        SELECT order_id, user_id, total_kopecks, status,
+               CASE WHEN status IN ('alpha','alpha_rejected') THEN 'installment' ELSE 'full' END,
+               CASE status WHEN 'alpha' THEN 'pending' WHEN 'alpha_rejected' THEN 'rejected' ELSE NULL END,
+               address, user_name, created_at
+        FROM order_header
+      `);
+      db.exec(`DROP TABLE order_header`);
+      db.exec(`ALTER TABLE ${tmpHeader} RENAME TO order_header`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_order_user ON order_header(user_id)`);
+
+      // Verify inside the transaction so a violation aborts before commit.
+      // `db.pragma` returns the check rows (unlike `db.exec`, which returns the DB).
+      const integrity = db.pragma("foreign_key_check") as unknown[];
+      if (Array.isArray(integrity) && integrity.length > 0) {
+        throw new Error(
+          `order payment-method migration left FK violations: ${JSON.stringify(integrity)}`,
+        );
+      }
+    })();
+  } finally {
+    db.pragma("foreign_keys = ON");
+  }
+}

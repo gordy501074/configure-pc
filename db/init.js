@@ -9,7 +9,7 @@ import Database from "better-sqlite3";
 import { readFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { migratePriceLists, migrateSellerBrandDescription, migrateUserAccount, migrateVendorAndAvailability, migrateConfigReadyLink, migrateOrderAttributionAndCancel, migrateOrderRejectedStatus } from "./migrate.ts";
+import { migratePriceLists, migrateSellerBrandDescription, migrateUserAccount, migrateVendorAndAvailability, migrateConfigReadyLink, migrateOrderAttributionAndCancel, migrateOrderRejectedStatus, migrateOrderPaymentMethod } from "./migrate.ts";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const DB_PATH = join(root, "db", "confi.db");
@@ -28,6 +28,7 @@ migratePriceLists(db);
 migrateConfigReadyLink(db);
 migrateOrderAttributionAndCancel(db);
 migrateOrderRejectedStatus(db);
+migrateOrderPaymentMethod(db);
 
 const tables = db
   .prepare("SELECT count(*) AS c FROM sqlite_master WHERE type='table'")

@@ -1,7 +1,7 @@
--- Confi SQLite schema (STRICT, WAL). Version 10.
+-- Confi SQLite schema (STRICT, WAL). Version 11.
 -- DDL per plan section 2. Applied idempotently by db:init / db:seed.
 
-PRAGMA user_version = 10;
+PRAGMA user_version = 11;
 PRAGMA journal_mode = WAL;
 
 -- Vendors (trademarks) referenced by parts. Populated on the fly from part.brand.
@@ -100,6 +100,10 @@ CREATE TABLE IF NOT EXISTS order_header (
   user_id       TEXT NOT NULL,
   total_kopecks INTEGER NOT NULL CHECK (total_kopecks >= 0),
   status        TEXT NOT NULL DEFAULT 'new' CHECK (status IN ('new','confirmed','delivery','done','alpha','alpha_rejected','cancelled')),
+  -- Payment method: 'installment' for an Alpha-Bank installment request, 'full' otherwise.
+  payment_method       TEXT NOT NULL DEFAULT 'full' CHECK (payment_method IN ('full','installment')),
+  -- Installment decision snapshot; NULL for non-installment orders.
+  installment_decision TEXT CHECK (installment_decision IN ('pending','approved','rejected')),
   address       TEXT NOT NULL,
   user_name     TEXT NOT NULL,
   created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),

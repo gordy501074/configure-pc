@@ -14,6 +14,12 @@ export type OrderStatus =
 
 export type BadgeTone = "success" | "warning" | "info" | "neutral" | "destructive";
 
+/** How an order is paid: `installment` (Alpha-Bank request) or `full` (own expense). */
+export type PaymentMethod = "full" | "installment";
+
+/** Snapshot of the Alpha-Bank installment decision; null for non-installment orders. */
+export type InstallmentDecision = "pending" | "approved" | "rejected";
+
 export const ORDER_STATUS_LABELS: Record<OrderStatus, string> = {
   new: "Новый",
   confirmed: "Подтверждён",
