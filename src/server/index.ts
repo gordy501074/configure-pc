@@ -11,6 +11,7 @@ import { createSellerRepository } from "./repository/seller.ts";
 import { createVendorRepository } from "./repository/vendor.ts";
 import { createAppStateRepository } from "./repository/app-state.ts";
 import { createAnalyticsRepository, type AnalyticsEvent } from "./repository/analytics.ts";
+import { createSalesAnalyticsRepository, type SalesAnalyticsScope } from "./repository/analytics-sales.ts";
 import { createPriceListRepository } from "./repository/price-list.ts";
 import { openDb } from "./db.ts";
 import type { SaveConfigInput, SaveOrderInput, SaveReviewInput } from "./repository/user-data.ts";
@@ -31,6 +32,7 @@ const sellerRepo = createSellerRepository(db);
 const vendorRepo = createVendorRepository(db);
 const appState = createAppStateRepository(db);
 const analytics = createAnalyticsRepository(db);
+const salesAnalytics = createSalesAnalyticsRepository(db);
 const priceLists = createPriceListRepository(db);
 
 const VALID_ROLES: UserRole[] = ["customer", "seller", "admin"];
@@ -1052,6 +1054,7 @@ function installmentDecision(
     return void res.status(409).json({ error: "invalid_transition" });
   }
   userData.setOrderStatus(orderId, next);
+  userData.setInstallmentDecision(orderId, next === "confirmed" ? "approved" : "rejected");
   res.json(userData.listOrdersByStatus(next).find((o) => o.id === orderId) ?? null);
 }
 
@@ -1077,7 +1080,107 @@ app.post("/api/orders/:id/buy-own", (req, res) => {
     return void res.status(409).json({ error: "invalid_transition" });
   }
   userData.setOrderStatus(orderId, "confirmed");
+  userData.setOrderPaymentMethod(orderId, "full");
   res.json(userData.listOrders(actor.userId).find((o) => o.id === orderId) ?? null);
+});
+
+// ---- Sales analytics (seller + admin) ----
+
+type AnalyticsPeriod = "7d" | "30d" | "90d" | "all";
+
+const PERIOD_DAYS: Record<Exclude<AnalyticsPeriod, "all">, number> = {
+  "7d": 7,
+  "30d": 30,
+  "90d": 90,
+};
+
+/** Resolve a period preset into an ISO `{ from, to }` range (UTC, `to = now`). */
+function periodRange(period: AnalyticsPeriod): { from: string | null; to: string } {
+  const to = new Date().toISOString();
+  if (period === "all") return { from: null, to };
+  const days = PERIOD_DAYS[period];
+  const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+  return { from, to };
+}
+
+function parsePeriod(raw: unknown): AnalyticsPeriod {
+  return raw === "7d" || raw === "90d" || raw === "all" ? raw : "30d";
+}
+
+/** Build the API-facing sales-analytics DTO (rubles, klepecks -> /100). */
+function buildSalesAnalyticsDto(
+  preset: AnalyticsPeriod,
+  sellerId: string | null,
+  includeInstallment: boolean,
+) {
+  const range = periodRange(preset);
+  const scope: SalesAnalyticsScope = { sellerId, from: range.from, to: range.to };
+  const kpi = salesAnalytics.kpi(scope);
+  const inst = includeInstallment ? salesAnalytics.installment(scope) : null;
+  const dto: Record<string, unknown> = {
+    period: { preset, from: range.from, to: range.to },
+    sellerId,
+    kpi: {
+      revenue: kpi.revenueKopecks / 100,
+      orders: kpi.orders,
+      units: kpi.units,
+      avgOrder: kpi.avgOrderKopecks / 100,
+      cancelledOrders: kpi.cancelledOrders,
+      cancelledRate: kpi.cancelledRate,
+    },
+    revenueByDay: salesAnalytics.revenueByDay(scope).map((r) => ({
+      date: r.date,
+      revenue: r.revenueKopecks / 100,
+      orders: r.orders,
+    })),
+    funnel: salesAnalytics.funnel(scope).map((r) => ({
+      status: r.status,
+      orders: r.orders,
+      revenue: r.revenueKopecks / 100,
+    })),
+    topBuilds: salesAnalytics.topBuilds(scope, 10).map((r) => ({
+      kind: r.kind,
+      refId: r.refId,
+      name: r.name,
+      units: r.units,
+      revenue: r.revenueKopecks / 100,
+    })),
+    topParts: salesAnalytics.topParts(scope, 10).map((r) => ({
+      refId: r.refId,
+      name: r.name,
+      category: r.category,
+      units: r.units,
+      revenue: r.revenueKopecks / 100,
+    })),
+    orderValueBuckets: salesAnalytics.orderValueBuckets(scope),
+    catalogCoverage: salesAnalytics.catalogCoverage(scope),
+  };
+  if (inst) {
+    dto.installment = {
+      approved: inst.approved,
+      rejected: inst.rejected,
+      pending: inst.pending,
+      withInstallment: inst.withInstallment,
+      withoutInstallment: inst.withoutInstallment,
+      installmentShare: inst.installmentShare,
+      avgInstallmentOrder: inst.avgInstallmentOrderKopecks / 100,
+      avgFullOrder: inst.avgFullOrderKopecks / 100,
+    };
+  }
+  return dto;
+}
+
+app.get("/api/seller/:id/analytics", (req, res) => {
+  const ctx = customerOrdersActor(req, res);
+  if (!ctx) return;
+  const preset = parsePeriod(req.query.period);
+  res.json(buildSalesAnalyticsDto(preset, ctx.sellerId, false));
+});
+
+app.get("/api/admin/analytics", (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  const preset = parsePeriod(req.query.period);
+  res.json(buildSalesAnalyticsDto(preset, null, true));
 });
 
 // ---- Reviews ----

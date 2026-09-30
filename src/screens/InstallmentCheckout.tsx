@@ -120,6 +120,8 @@ export default function InstallmentCheckout() {
       })),
       total,
       status: "alpha",
+      paymentMethod: "installment",
+      installmentDecision: "pending",
       address: email,
       userName: name.trim(),
     };

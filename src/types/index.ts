@@ -2,6 +2,8 @@
  * Core domain types for the PC configurator.
  */
 
+import type { InstallmentDecision, PaymentMethod } from "../lib/orderStatus.ts";
+
 export type ComponentCategory =
   | "cpu"
   | "gpu"
@@ -155,6 +157,10 @@ export interface Order {
   items: OrderItem[];
   total: number;
   status: "new" | "confirmed" | "delivery" | "done" | "alpha" | "alpha_rejected" | "cancelled";
+  /** How the order is paid (absent on legacy payloads = 'full'). */
+  paymentMethod?: PaymentMethod;
+  /** Alpha-Bank installment decision snapshot; null/absent for non-installment orders. */
+  installmentDecision?: InstallmentDecision | null;
   address: string;
   userName: string;
 }
@@ -221,4 +227,82 @@ export interface PartIssue {
   category: ComponentCategory;
   partId: string;
   reason: string;
+}
+
+// ---- Sales analytics ----
+
+export type AnalyticsPeriod = "7d" | "30d" | "90d" | "all";
+
+export interface SalesKpi {
+  revenue: number;
+  orders: number;
+  units: number;
+  avgOrder: number;
+  cancelledOrders: number;
+  cancelledRate: number;
+}
+
+export interface RevenueDayRow {
+  date: string;
+  revenue: number;
+  orders: number;
+}
+
+export interface FunnelStage {
+  status: Order["status"];
+  orders: number;
+  revenue: number;
+}
+
+export interface TopBuildRow {
+  kind: "ready" | "config";
+  refId: string;
+  name: string;
+  units: number;
+  revenue: number;
+}
+
+export interface TopPartRow {
+  refId: string;
+  name: string;
+  category: string;
+  units: number;
+  revenue: number;
+}
+
+export interface BucketRow {
+  bucket: string;
+  orders: number;
+}
+
+export interface CoverageRow {
+  category: string;
+  total: number;
+  priced: number;
+  available: number;
+}
+
+export interface InstallmentAnalytics {
+  approved: number;
+  rejected: number;
+  pending: number;
+  withInstallment: number;
+  withoutInstallment: number;
+  installmentShare: number;
+  avgInstallmentOrder: number;
+  avgFullOrder: number;
+}
+
+export interface SalesAnalytics {
+  period: { preset: AnalyticsPeriod; from: string | null; to: string };
+  sellerId: string | null;
+  kpi: SalesKpi;
+  revenueByDay: RevenueDayRow[];
+  funnel: FunnelStage[];
+  topBuilds: TopBuildRow[];
+  topParts: TopPartRow[];
+  orderValueBuckets: BucketRow[];
+  catalogCoverage: CoverageRow[];
+  /** Only returned by the admin aggregate endpoint. */
+  installment?: InstallmentAnalytics;
 }

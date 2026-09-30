@@ -3,6 +3,7 @@
 // Domain types (src/types) are used; JSON DTOs from the server are mapped here.
 
 import type {
+  AnalyticsPeriod,
   AppSettings,
   ComponentCategory,
   Config,
@@ -13,6 +14,7 @@ import type {
   PriceListItem,
   ReadyPc,
   Review,
+  SalesAnalytics,
   SellerBrand,
   SellerSummary,
   SpecItem,
@@ -396,6 +398,7 @@ export async function saveOrderRemote(order: Order, userId: string): Promise<Ord
     method: "PUT",
     body: JSON.stringify({
       status: order.status,
+      paymentMethod: order.paymentMethod,
       address: order.address,
       userName: order.userName,
       items: order.items,
@@ -572,6 +575,23 @@ export async function deleteSellerBrand(
 
 export async function fetchSellerSummaries(): Promise<SellerSummary[]> {
   return req<SellerSummary[]>("/sellers");
+}
+
+// ---- Sales analytics ----
+
+export async function fetchSellerSalesAnalytics(
+  sellerId: string,
+  period: AnalyticsPeriod,
+): Promise<SalesAnalytics> {
+  return req<SalesAnalytics>(
+    `/seller/${encodeURIComponent(sellerId)}/analytics?period=${encodeURIComponent(period)}`,
+  );
+}
+
+export async function fetchAdminSalesAnalytics(
+  period: AnalyticsPeriod,
+): Promise<SalesAnalytics> {
+  return req<SalesAnalytics>(`/admin/analytics?period=${encodeURIComponent(period)}`);
 }
 
 // ---- Price lists (seller/admin) ----

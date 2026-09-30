@@ -96,6 +96,7 @@ export default function Checkout() {
       })),
       total,
       status: "new",
+      paymentMethod: "full",
       address,
       userName: name.trim(),
     };
