@@ -39,9 +39,10 @@ import Admin from "./Admin";
 import { ProfileComponents } from "./ProfileComponents";
 import { ProfilePriceLists } from "./ProfilePriceLists";
 import { ProfileReadyBuilds } from "./ProfileReadyBuilds";
+import { ProfileSalesAnalytics } from "./ProfileSalesAnalytics";
 import { ProfileSellerOrders } from "./ProfileSellerOrders";
 
-type Tab = "configs" | "orders" | "reviews" | "admin-users" | "brands" | "components" | "price-lists" | "ready-builds" | "customer-orders";
+type Tab = "configs" | "orders" | "reviews" | "admin-users" | "brands" | "components" | "price-lists" | "ready-builds" | "customer-orders" | "sales-analytics";
 
 interface TabDef {
   key: Tab;
@@ -56,6 +57,7 @@ function tabsForRole(role: string): TabDef[] {
       { key: "price-lists", label: "Прайс-листы" },
       { key: "ready-builds", label: "Готовые конфигурации" },
       { key: "customer-orders", label: "Заказы покупателей" },
+      { key: "sales-analytics", label: "Аналитика продаж" },
     ];
   }
   if (role === "seller") {
@@ -65,6 +67,7 @@ function tabsForRole(role: string): TabDef[] {
       { key: "components", label: "Компоненты" },
       { key: "ready-builds", label: "Готовые конфигурации" },
       { key: "customer-orders", label: "Заказы покупателей" },
+      { key: "sales-analytics", label: "Аналитика продаж" },
     ];
   }
   return [
@@ -508,6 +511,8 @@ export default function Profile() {
         <ProfileReadyBuilds sellerId={user.id} isAdmin={user?.role === "admin"} />
       ) : activeTab === "customer-orders" ? (
         <ProfileSellerOrders sellerId={user.id} isAdmin={user?.role === "admin"} />
+      ) : activeTab === "sales-analytics" ? (
+        <ProfileSalesAnalytics sellerId={user.id} isAdmin={user?.role === "admin"} />
       ) : activeTab === "brands" ? (
         <section aria-label="Бренды" className="flex flex-col gap-4">
           <div className="flex flex-wrap items-center justify-between gap-2">

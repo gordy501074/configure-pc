@@ -30,3 +30,5 @@ export { EmptyState } from "./EmptyState";
 export { ErrorBoundary } from "./ErrorBoundary";
 export { Tabs, TabsList, TabsTrigger, TabsContent } from "./Tabs";
 export { Switch } from "./Switch";
+export { ChartContainer, ChartTooltipContent } from "./Chart";
+export type { ChartConfig } from "./Chart";
