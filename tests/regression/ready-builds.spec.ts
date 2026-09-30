@@ -471,10 +471,12 @@ test.describe("regression: seller ready builds", () => {
       await request.get(`/api/orders?userId=${encodeURIComponent(cust.user.id)}`, {
         headers: { cookie: `confi_session=${cust.sessionId}` },
       })
-    ).json()) as { items: { name: string; price: number }[] }[];
+    ).json()) as { items: { name: string; price: number; sellerId?: string }[] }[];
     const item = orders.flatMap((o) => o.items).find((i) => i.name === build.name);
     expect(item).toBeTruthy();
     expect(item!.price).toBe(100000);
+    // Seller attribution is snapshotted from ready_pc.seller_id at order time.
+    expect(item!.sellerId).toBe(SELLER_ID);
   });
 
   test("seller manages ready builds from the profile tab (UI)", async ({

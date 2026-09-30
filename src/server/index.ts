@@ -15,8 +15,9 @@ import { createPriceListRepository } from "./repository/price-list.ts";
 import { openDb } from "./db.ts";
 import type { SaveConfigInput, SaveOrderInput, SaveReviewInput } from "./repository/user-data.ts";
 import type { CatalogRepository } from "./repository/catalog.ts";
-import type { ComponentCategory, PartCompat, PartDto, SpecItem, Usage, UserRole } from "./repository/types.ts";
+import type { ComponentCategory, OrderStatus, PartCompat, PartDto, SpecItem, Usage, UserRole } from "./repository/types.ts";
 import { isPartOrderable, deriveBuildSpecs } from "./repository/types.ts";
+import { SELLER_ORDER_TRANSITIONS } from "../lib/orderStatus.ts";
 import { components } from "../data/mock.ts";
 
 const app = express();
@@ -922,23 +923,161 @@ app.get("/api/orders", (req, res) => {
   res.json(userData.listOrders(actorId(req)));
 });
 
+/**
+ * Reject when `orderId` exists but belongs to another user.
+ * Returns true when the caller may proceed (owner or a brand-new order id).
+ */
+function assertOrderOwner(
+  orderId: string,
+  actorId: string,
+  res: express.Response,
+): boolean {
+  const owner = userData.getOrderOwner(orderId);
+  if (owner !== null && owner !== actorId) {
+    res.status(403).json({ error: "forbidden" });
+    return false;
+  }
+  return true;
+}
+
 app.put("/api/orders/:id", (req, res) => {
   const actor = requireCustomer(req, res);
   if (!actor) return;
+  if (!assertOrderOwner(req.params.id, actor.userId, res)) return;
   const input = req.body as Omit<SaveOrderInput, "user_id" | "id">;
+  // A customer may create an order as 'new' (or 'alpha' via the installment
+  // form) but must not mutate an existing order's lifecycle status through PUT:
+  // transitions go through the dedicated seller/admin/buy-own endpoints. For an
+  // existing order the stored status wins; for a new order only 'new'/'alpha'
+  // are accepted (any other body status is coerced to 'new').
+  const existingStatus = userData.getOrderStatus(req.params.id);
+  const createdStatus: OrderStatus = input.status === "alpha" ? "alpha" : "new";
   const order = userData.saveOrder({
     id: req.params.id,
     user_id: actor.userId,
     ...input,
+    status: existingStatus ?? createdStatus,
   });
   res.json(order);
 });
 
-app.delete("/api/orders/:id", (req, res) => {
-  if (!requireCustomer(req, res)) return;
-  const ok = userData.deleteOrder(req.params.id);
-  if (!ok) return res.status(404).json({ error: "order not found" });
+/** Soft-cancel: keep the order, set status='cancelled'. */
+function cancelOrderHandler(req: express.Request, res: express.Response): void {
+  const actor = requireCustomer(req, res);
+  if (!actor) return;
+  const orderId = String(req.params.id);
+  const owner = userData.getOrderOwner(orderId);
+  if (owner === null) return void res.status(404).json({ error: "order not found" });
+  if (owner !== actor.userId) {
+    return void res.status(403).json({ error: "forbidden" });
+  }
+  const ok = userData.cancelOrder(orderId);
+  if (!ok) return void res.status(404).json({ error: "order not found" });
   res.status(204).end();
+}
+
+app.post("/api/orders/:id/cancel", cancelOrderHandler);
+
+// Deprecated alias: DELETE now performs a soft-cancel (kept for client compatibility).
+app.delete("/api/orders/:id", cancelOrderHandler);
+
+// ---- Seller / admin: customer orders ----
+
+/** Orders in which the seller has at least one line (or, for admin, all orders). */
+function customerOrdersActor(
+  req: express.Request,
+  res: express.Response,
+): { actor: { userId: string; role: UserRole }; sellerId: string } | null {
+  const actor = actorRole(req);
+  if (!actor) {
+    res.status(403).json({ error: "unauthorized" });
+    return null;
+  }
+  if (actor.role !== "admin" && actor.userId !== req.params.id) {
+    res.status(403).json({ error: "forbidden" });
+    return null;
+  }
+  return { actor, sellerId: String(req.params.id) };
+}
+
+/** Allowed whole-order status transitions performed by a seller.
+
+(Canonical map lives in src/lib/orderStatus.ts, shared with the client so the UI
+never offers a transition the server would reject.) */
+
+app.get("/api/seller/:id/orders", (req, res) => {
+  const ctx = customerOrdersActor(req, res);
+  if (!ctx) return;
+  res.json(userData.listOrdersForSeller(ctx.sellerId));
+});
+
+app.post("/api/seller/:id/orders/:orderId/status", (req, res) => {
+  const ctx = customerOrdersActor(req, res);
+  if (!ctx) return;
+  const orderId = String(req.params.orderId);
+  const status = (req.body as { status?: string })?.status as OrderStatus | undefined;
+  if (!status) return res.status(400).json({ error: "status_required" });
+  const current = userData.getOrderStatus(orderId);
+  if (current === null) return res.status(404).json({ error: "order not found" });
+  const isAdmin = ctx.actor.role === "admin";
+  if (!isAdmin && !userData.orderHasSeller(orderId, ctx.sellerId)) {
+    return res.status(403).json({ error: "forbidden" });
+  }
+  const allowed = SELLER_ORDER_TRANSITIONS[current] ?? [];
+  if (!allowed.includes(status)) {
+    return res.status(409).json({ error: "invalid_transition" });
+  }
+  userData.setOrderStatus(orderId, status);
+  res.json(userData.listOrdersForSeller(ctx.sellerId).find((o) => o.id === orderId) ?? null);
+});
+
+// ---- Admin: installment (Alpha-Bank) requests ----
+
+app.get("/api/admin/orders", (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  const status = (typeof req.query.status === "string" ? req.query.status : "alpha") as OrderStatus;
+  res.json(userData.listOrdersByStatus(status));
+});
+
+function installmentDecision(
+  req: express.Request,
+  res: express.Response,
+  next: OrderStatus,
+): void {
+  if (!requireAdmin(req, res)) return;
+  const orderId = String(req.params.orderId);
+  const current = userData.getOrderStatus(orderId);
+  if (current === null) return void res.status(404).json({ error: "order not found" });
+  if (current !== "alpha") {
+    return void res.status(409).json({ error: "invalid_transition" });
+  }
+  userData.setOrderStatus(orderId, next);
+  res.json(userData.listOrdersByStatus(next).find((o) => o.id === orderId) ?? null);
+}
+
+app.post("/api/admin/orders/:orderId/approve-installment", (req, res) => {
+  installmentDecision(req, res, "confirmed");
+});
+
+app.post("/api/admin/orders/:orderId/reject-installment", (req, res) => {
+  installmentDecision(req, res, "alpha_rejected");
+});
+
+// ---- Customer: buy at own expense after an installment rejection ----
+
+app.post("/api/orders/:id/buy-own", (req, res) => {
+  const actor = requireCustomer(req, res);
+  if (!actor) return;
+  const orderId = String(req.params.id);
+  const owner = userData.getOrderOwner(orderId);
+  if (owner === null) return void res.status(404).json({ error: "order not found" });
+  if (owner !== actor.userId) return void res.status(403).json({ error: "forbidden" });
+  const current = userData.getOrderStatus(orderId);
+  if (current !== "alpha_rejected") {
+    return void res.status(409).json({ error: "invalid_transition" });
+  }
+  userData.setOrderStatus(orderId, "confirmed");
+  res.json(userData.listOrders(actor.userId).find((o) => o.id === orderId) ?? null);
 });
 
 // ---- Reviews ----

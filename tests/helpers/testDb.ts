@@ -6,7 +6,7 @@ import { mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { components, readyPcs } from "../../src/data/mock.ts";
-import { migratePriceLists, migrateSellerBrandDescription, migrateUserAccount, migrateVendorAndAvailability, migrateConfigReadyLink } from "../../db/migrate.ts";
+import { migratePriceLists, migrateSellerBrandDescription, migrateUserAccount, migrateVendorAndAvailability, migrateConfigReadyLink, migrateOrderAttributionAndCancel, migrateOrderRejectedStatus } from "../../db/migrate.ts";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -203,6 +203,8 @@ export function initTestDb(dbPath = TEST_DB_PATH): string {
   migrateVendorAndAvailability(db);
   migratePriceLists(db);
   migrateConfigReadyLink(db);
+  migrateOrderAttributionAndCancel(db);
+  migrateOrderRejectedStatus(db);
   seed(db);
   db.close();
   return dbPath;

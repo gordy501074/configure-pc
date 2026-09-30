@@ -143,6 +143,10 @@ export interface OrderItem {
   name: string;
   price: number;
   count: number;
+  /** Seller attribution snapshot (absent for legacy/history rows). */
+  sellerId?: string;
+  /** Category snapshot for per-category analytics. */
+  category?: ComponentCategory;
 }
 
 export interface Order {
@@ -150,7 +154,7 @@ export interface Order {
   createdAt: number;
   items: OrderItem[];
   total: number;
-  status: "new" | "confirmed" | "delivery" | "done" | "alpha";
+  status: "new" | "confirmed" | "delivery" | "done" | "alpha" | "alpha_rejected" | "cancelled";
   address: string;
   userName: string;
 }

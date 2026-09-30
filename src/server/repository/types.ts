@@ -12,7 +12,7 @@ export type ComponentCategory =
 
 export type Usage = "gaming" | "work" | "video" | "universal";
 export type ConfigSource = "custom" | "auto" | "ready";
-export type OrderStatus = "new" | "confirmed" | "delivery" | "done" | "alpha";
+export type OrderStatus = "new" | "confirmed" | "delivery" | "done" | "alpha" | "alpha_rejected" | "cancelled";
 export type UserRole = "customer" | "seller" | "admin";
 export type SellerBrandDto = { brand: string; description?: string };
 
@@ -192,6 +192,8 @@ export interface OrderItemRow {
   name: string;
   price_kopecks: number;
   count: number;
+  seller_id: string | null;
+  category: string | null;
 }
 
 export interface OrderItemDto {
@@ -200,6 +202,8 @@ export interface OrderItemDto {
   name: string;
   price: number;
   count: number;
+  sellerId?: string;
+  category?: ComponentCategory;
 }
 
 export interface OrderRow {

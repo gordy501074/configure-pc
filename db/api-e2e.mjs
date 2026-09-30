@@ -142,7 +142,7 @@ const cfg = {
   ],
 };
 const saved = await fetch(base + "/api/configs/cfg-x?userId=usr-test", {
-  method: "PUT", headers: jh, body: JSON.stringify(cfg),
+  method: "PUT", headers: { ...jh, Cookie: `confi_session=${session.sessionId}` }, body: JSON.stringify(cfg),
 }).then(j);
 check("config save", saved.parts.length === 8 && saved.name === "Игровая сборка");
 const list = await fetch(base + "/api/configs?userId=usr-test").then(j);
@@ -150,17 +150,196 @@ check("config list", list.length === 1 && list[0].id === "cfg-x");
 
 // order
 const order = await fetch(base + "/api/orders/ord-1?userId=usr-test", {
-  method: "PUT", headers: jh,
+  method: "PUT", headers: { ...jh, Cookie: `confi_session=${session.sessionId}` },
   body: JSON.stringify({
     status: "new", address: "Москва", userName: "Тест",
     items: [{ kind: "ready", refId: "ready-gaming", name: "Confi Gaming X", price: 139900, count: 1 }],
   }),
 }).then(j);
 check("order save", order.total === 139900 && order.address === "Москва");
+// Attribution: server resolves ready-line seller from ready_pc.seller_id.
+check("order item seller resolved", order.items?.[0]?.sellerId === "usr-seller");
+
+// soft-cancel via explicit endpoint keeps the row and flips status
+const cancelRes = await fetch(base + "/api/orders/ord-1/cancel?userId=usr-test", {
+  method: "POST", headers: { ...jh, Cookie: `confi_session=${session.sessionId}` },
+});
+check("order cancel 204", cancelRes.status === 204);
+const afterCancel = await fetch(base + "/api/orders?userId=usr-test").then(j);
+const cancelled = afterCancel.find((o) => o.id === "ord-1");
+check("order soft-cancelled preserved", !!cancelled && cancelled.status === "cancelled" && cancelled.items.length === 1);
+
+// another customer cannot cancel a foreign order
+const stranger = await fetch(base + "/api/session", {
+  method: "POST", headers: jh,
+  body: JSON.stringify({ id: "usr-stranger", name: "Чужой", email: "stranger@example.com" }),
+}).then(j);
+const foreignCancel = await fetch(base + "/api/orders/ord-1/cancel?userId=usr-stranger", {
+  method: "POST", headers: { ...jh, Cookie: `confi_session=${stranger.sessionId}` },
+});
+check("order cancel foreign 403", foreignCancel.status === 403);
+
+// ---- Seller / admin customer-orders lifecycle ----
+
+// A second seller account (FK target for a foreign order line).
+await fetch(base + "/api/session", {
+  method: "POST", headers: jh,
+  body: JSON.stringify({ id: "usr-other-seller", name: "Другой продавец", role: "seller" }),
+}).then(j);
+
+// A customer cannot self-approve an existing order's status via PUT: the stored
+// status wins over the body (lifecycle goes through the dedicated endpoints).
+await fetch(base + "/api/orders/ord-sticky?userId=usr-test", {
+  method: "PUT", headers: { ...jh, Cookie: `confi_session=${session.sessionId}` },
+  body: JSON.stringify({
+    status: "new", address: "Москва", userName: "Тест",
+    items: [{ kind: "ready", refId: "ready-gaming", name: "Confi Gaming X", price: 139900, count: 1 }],
+  }),
+});
+const stickyPut = await fetch(base + "/api/orders/ord-sticky?userId=usr-test", {
+  method: "PUT", headers: { ...jh, Cookie: `confi_session=${session.sessionId}` },
+  body: JSON.stringify({
+    status: "done", address: "Москва", userName: "Тест",
+    items: [{ kind: "ready", refId: "ready-gaming", name: "Confi Gaming X", price: 139900, count: 1 }],
+  }),
+}).then(j);
+check("customer PUT cannot self-advance status", stickyPut.status === "new");
+
+// A customer cannot create an order pre-set to a terminal lifecycle status.
+const sneakyCreate = await fetch(base + "/api/orders/ord-sneaky?userId=usr-test", {
+  method: "PUT", headers: { ...jh, Cookie: `confi_session=${session.sessionId}` },
+  body: JSON.stringify({
+    status: "done", address: "Москва", userName: "Тест",
+    items: [{ kind: "ready", refId: "ready-gaming", name: "Confi Gaming X", price: 139900, count: 1 }],
+  }),
+}).then(j);
+check("customer PUT cannot create as terminal status", sneakyCreate.status === "new");
+
+// Order with a line of usr-seller and a line of usr-other-seller.
+const sellerOrder = await fetch(base + "/api/orders/ord-seller-1?userId=usr-test", {
+  method: "PUT", headers: { ...jh, Cookie: `confi_session=${session.sessionId}` },
+  body: JSON.stringify({
+    status: "new", address: "СПб", userName: "Тест",
+    items: [
+      { kind: "ready", refId: "ready-gaming", name: "Confi Gaming X", price: 139900, count: 1 },
+      { kind: "config", refId: "cpu-1", name: "Чужой процессор", price: 100, count: 2, sellerId: "usr-other-seller", category: "cpu" },
+    ],
+  }),
+}).then(j);
+check("seller order created", !!sellerOrder.id && sellerOrder.items.length === 2);
+
+const sellerOrders = await fetch(base + "/api/seller/usr-seller/orders", {
+  headers: { Cookie: `confi_session=${sellerSessionA.sessionId}` },
+}).then(j);
+const mine = sellerOrders.find((o) => o.id === "ord-seller-1");
+check("seller sees own order", !!mine);
+check("seller lines filtered to own", mine?.items.length === 1 && mine?.items[0]?.sellerId === "usr-seller");
+check("seller total only own lines", mine?.total === 139900);
+
+// Customer cannot read the seller's orders endpoint.
+const sellerOrdersCust = await fetch(base + "/api/seller/usr-other-seller/orders", {
+  headers: { Cookie: `confi_session=${customerSess.sessionId}` },
+});
+check("seller orders foreign 403", sellerOrdersCust.status === 403);
+
+// Valid transition: new -> confirmed.
+const toConfirmed = await fetch(base + "/api/seller/usr-seller/orders/ord-seller-1/status", {
+  method: "POST", headers: { ...jh, Cookie: `confi_session=${sellerSessionA.sessionId}` },
+  body: JSON.stringify({ status: "confirmed" }),
+});
+check("seller transition new->confirmed 200", toConfirmed.status === 200);
+
+// Invalid transition: confirmed -> confirmed.
+const badTransition = await fetch(base + "/api/seller/usr-seller/orders/ord-seller-1/status", {
+  method: "POST", headers: { ...jh, Cookie: `confi_session=${sellerSessionA.sessionId}` },
+  body: JSON.stringify({ status: "confirmed" }),
+});
+check("seller invalid transition 409", badTransition.status === 409);
+
+// A seller with no line in the order cannot change its status.
+const noLineSeller = await fetch(base + "/api/session", {
+  method: "POST", headers: jh,
+  body: JSON.stringify({ id: "usr-no-line", name: "Без позиций", role: "seller" }),
+}).then(j);
+const foreignSellerStatus = await fetch(base + "/api/seller/usr-no-line/orders/ord-seller-1/status", {
+  method: "POST", headers: { ...jh, Cookie: `confi_session=${noLineSeller.sessionId}` },
+  body: JSON.stringify({ status: "cancelled" }),
+});
+check("seller foreign order 403", foreignSellerStatus.status === 403);
+
+// ---- Installment (Alpha) approve / reject ----
+
+const alphaOrder = await fetch(base + "/api/orders/ord-alpha-1?userId=usr-test", {
+  method: "PUT", headers: { ...jh, Cookie: `confi_session=${session.sessionId}` },
+  body: JSON.stringify({
+    status: "alpha", address: "Казань", userName: "Тест",
+    items: [{ kind: "ready", refId: "ready-gaming", name: "Confi Gaming X", price: 139900, count: 1 }],
+  }),
+}).then(j);
+check("alpha order created", alphaOrder.status === "alpha");
+
+const alphaList = await fetch(base + "/api/admin/orders?status=alpha", {
+  headers: { Cookie: `confi_session=${adminSession.sessionId}` },
+}).then(j);
+check("admin alpha list", Array.isArray(alphaList) && alphaList.some((o) => o.id === "ord-alpha-1"));
+
+const approved = await fetch(base + "/api/admin/orders/ord-alpha-1/approve-installment", {
+  method: "POST", headers: { ...jh, Cookie: `confi_session=${adminSession.sessionId}` },
+});
+check("admin approve 200", approved.status === 200);
+const approvedBody = await approved.json();
+check("admin approve -> confirmed", approvedBody?.status === "confirmed");
+
+// Second decision on a non-alpha order -> 409.
+const reApprove = await fetch(base + "/api/admin/orders/ord-alpha-1/approve-installment", {
+  method: "POST", headers: { ...jh, Cookie: `confi_session=${adminSession.sessionId}` },
+});
+check("admin re-decision 409", reApprove.status === 409);
+
+// Reject path.
+await fetch(base + "/api/orders/ord-alpha-2?userId=usr-test", {
+  method: "PUT", headers: { ...jh, Cookie: `confi_session=${session.sessionId}` },
+  body: JSON.stringify({
+    status: "alpha", address: "Сочи", userName: "Тест",
+    items: [{ kind: "ready", refId: "ready-gaming", name: "Confi Gaming X", price: 139900, count: 1 }],
+  }),
+});
+const rejected = await fetch(base + "/api/admin/orders/ord-alpha-2/reject-installment", {
+  method: "POST", headers: { ...jh, Cookie: `confi_session=${adminSession.sessionId}` },
+}).then(j);
+check("admin reject -> alpha_rejected", rejected?.status === "alpha_rejected");
+
+// Customer buys at own expense (alpha_rejected -> confirmed).
+const buyOwn = await fetch(base + "/api/orders/ord-alpha-2/buy-own", {
+  method: "POST", headers: { ...jh, Cookie: `confi_session=${session.sessionId}` },
+}).then(j);
+check("customer buy-own -> confirmed", buyOwn?.status === "confirmed");
+
+// Buy-own on a non-rejected order -> 409.
+const buyOwnAgain = await fetch(base + "/api/orders/ord-alpha-2/buy-own", {
+  method: "POST", headers: { ...jh, Cookie: `confi_session=${session.sessionId}` },
+});
+check("customer buy-own wrong status 409", buyOwnAgain.status === 409);
+
+// Buy-own by a non-owner -> 403.
+await fetch(base + "/api/orders/ord-alpha-3?userId=usr-test", {
+  method: "PUT", headers: { ...jh, Cookie: `confi_session=${session.sessionId}` },
+  body: JSON.stringify({
+    status: "alpha", address: "Сочи", userName: "Тест",
+    items: [{ kind: "ready", refId: "ready-gaming", name: "Confi Gaming X", price: 139900, count: 1 }],
+  }),
+});
+await fetch(base + "/api/admin/orders/ord-alpha-3/reject-installment", {
+  method: "POST", headers: { ...jh, Cookie: `confi_session=${adminSession.sessionId}` },
+});
+const buyOwnForeign = await fetch(base + "/api/orders/ord-alpha-3/buy-own", {
+  method: "POST", headers: { ...jh, Cookie: `confi_session=${stranger.sessionId}` },
+});
+check("customer buy-own foreign 403", buyOwnForeign.status === 403);
 
 // review
 const review = await fetch(base + "/api/reviews/rev-test", {
-  method: "PUT", headers: jh,
+  method: "PUT", headers: { ...jh, Cookie: `confi_session=${session.sessionId}` },
   body: JSON.stringify({ entityId: "ready-gaming", author: "Дмитрий", rating: 5, text: "Отлично" }),
 }).then(j);
 check("review save", review.entityId === "ready-gaming" && review.text === "Отлично");
@@ -176,14 +355,16 @@ check("settings dark", sett.theme === "dark" && sett.notifications === false, se
 
 // custom-config review
 const custom = await fetch(base + "/api/reviews/rev-custom", {
-  method: "PUT", headers: jh,
+  method: "PUT", headers: { ...jh, Cookie: `confi_session=${session.sessionId}` },
   body: JSON.stringify({ entityId: "custom-config", author: "Кастом", rating: 4, text: "Хорошо" }),
 }).then(j);
 const customList = await fetch(base + "/api/reviews?entityId=custom-config").then(j);
 check("custom review", custom.entityId === "custom-config" && customList.some((r) => r.id === "rev-custom"));
 
 // delete
-const delCfg = await fetch(base + "/api/configs/cfg-x?userId=usr-test", { method: "DELETE" });
+const delCfg = await fetch(base + "/api/configs/cfg-x?userId=usr-test", {
+  method: "DELETE", headers: { Cookie: `confi_session=${session.sessionId}` },
+});
 check("delete config", delCfg.status === 204);
 const list2 = await fetch(base + "/api/configs?userId=usr-test").then(j);
 check("config deleted", list2.length === 0);

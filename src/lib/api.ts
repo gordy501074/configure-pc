@@ -403,8 +403,48 @@ export async function saveOrderRemote(order: Order, userId: string): Promise<Ord
   });
 }
 
-export async function deleteOrderRemote(id: string): Promise<void> {
-  await req<void>(`/orders/${encodeURIComponent(id)}`, { method: "DELETE" });
+export async function cancelOrderRemote(id: string): Promise<void> {
+  await req<void>(`/orders/${encodeURIComponent(id)}/cancel`, { method: "POST" });
+}
+
+/** Customer buys at their own expense after an installment rejection (alpha_rejected -> confirmed). */
+export async function buyOwnOrder(orderId: string): Promise<Order> {
+  return req<Order>(`/orders/${encodeURIComponent(orderId)}/buy-own`, { method: "POST" });
+}
+
+// ---- Seller / admin: customer orders ----
+
+export async function fetchSellerOrders(sellerId: string): Promise<Order[]> {
+  return req<Order[]>(`/seller/${encodeURIComponent(sellerId)}/orders`);
+}
+
+export async function updateSellerOrderStatus(
+  sellerId: string,
+  orderId: string,
+  status: Order["status"],
+): Promise<Order | null> {
+  return req<Order | null>(
+    `/seller/${encodeURIComponent(sellerId)}/orders/${encodeURIComponent(orderId)}/status`,
+    { method: "POST", body: JSON.stringify({ status }) },
+  );
+}
+
+export async function fetchAlphaOrders(): Promise<Order[]> {
+  return req<Order[]>("/admin/orders?status=alpha");
+}
+
+export async function approveInstallment(orderId: string): Promise<Order | null> {
+  return req<Order | null>(
+    `/admin/orders/${encodeURIComponent(orderId)}/approve-installment`,
+    { method: "POST" },
+  );
+}
+
+export async function rejectInstallment(orderId: string): Promise<Order | null> {
+  return req<Order | null>(
+    `/admin/orders/${encodeURIComponent(orderId)}/reject-installment`,
+    { method: "POST" },
+  );
 }
 
 // ---- Reviews ----

@@ -1,4 +1,4 @@
-// Apply the Confi SQLite schema (empty STRICT tables, indexes, WAL, user_version=7).
+// Apply the Confi SQLite schema (empty STRICT tables, indexes, WAL, user_version=10).
 // Idempotent: re-running is safe.  Usage: npm run db:init
 //
 // The schema lives in db/schema.sql and is also applied by db/seed.js before seeding.
@@ -9,7 +9,7 @@ import Database from "better-sqlite3";
 import { readFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { migratePriceLists, migrateSellerBrandDescription, migrateUserAccount, migrateVendorAndAvailability, migrateConfigReadyLink } from "./migrate.ts";
+import { migratePriceLists, migrateSellerBrandDescription, migrateUserAccount, migrateVendorAndAvailability, migrateConfigReadyLink, migrateOrderAttributionAndCancel, migrateOrderRejectedStatus } from "./migrate.ts";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const DB_PATH = join(root, "db", "confi.db");
@@ -26,6 +26,8 @@ migrateSellerBrandDescription(db);
 migrateVendorAndAvailability(db);
 migratePriceLists(db);
 migrateConfigReadyLink(db);
+migrateOrderAttributionAndCancel(db);
+migrateOrderRejectedStatus(db);
 
 const tables = db
   .prepare("SELECT count(*) AS c FROM sqlite_master WHERE type='table'")

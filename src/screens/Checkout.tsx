@@ -17,13 +17,21 @@ import { configStats } from "../lib/compatibility";
 import { saveOrderRemote } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { uid } from "../lib/session";
-import type { Config, Order, Part } from "../types";
+import type { ComponentCategory, Config, Order, Part } from "../types";
 
 interface CheckoutState {
   orderTitle?: string;
   total?: number;
   config?: Config;
-  line?: { kind: "ready" | "config"; refId: string; name: string; price: number; count: number };
+  line?: {
+    kind: "ready" | "config";
+    refId: string;
+    name: string;
+    price: number;
+    count: number;
+    sellerId?: string;
+    category?: ComponentCategory;
+  };
 }
 
 export default function Checkout() {
@@ -51,6 +59,8 @@ export default function Checkout() {
         name: part.name,
         price: part.price ?? 0,
         count: 1,
+        sellerId: config?.sellerId,
+        category: part.category,
       }));
   const total = stats.totalPrice;
 
@@ -81,6 +91,8 @@ export default function Checkout() {
         name: it.name ?? config?.name ?? "",
         price: it.price ?? 0,
         count: it.count ?? 1,
+        sellerId: it.sellerId,
+        category: it.category,
       })),
       total,
       status: "new",

@@ -21,8 +21,9 @@ import { configStats, isPriceStale } from "../lib/compatibility";
 import { formatAgo, formatDate, formatPrice } from "../lib/format";
 import {
   addSellerBrand,
+  buyOwnOrder,
+  cancelOrderRemote,
   deleteConfigRemote,
-  deleteOrderRemote,
   deleteSellerBrand,
   fetchAllReviews,
   fetchConfigs,
@@ -32,13 +33,15 @@ import {
   updateSellerBrand,
 } from "../lib/api";
 import { useAuth } from "../lib/auth";
+import { isInstallmentRejected, orderStatusLabel, orderStatusTone } from "../lib/orderStatus";
 import type { Config, Order, Review, SellerBrand } from "../types";
 import Admin from "./Admin";
 import { ProfileComponents } from "./ProfileComponents";
 import { ProfilePriceLists } from "./ProfilePriceLists";
 import { ProfileReadyBuilds } from "./ProfileReadyBuilds";
+import { ProfileSellerOrders } from "./ProfileSellerOrders";
 
-type Tab = "configs" | "orders" | "reviews" | "admin-users" | "brands" | "components" | "price-lists" | "ready-builds";
+type Tab = "configs" | "orders" | "reviews" | "admin-users" | "brands" | "components" | "price-lists" | "ready-builds" | "customer-orders";
 
 interface TabDef {
   key: Tab;
@@ -52,6 +55,7 @@ function tabsForRole(role: string): TabDef[] {
       { key: "components", label: "Компоненты" },
       { key: "price-lists", label: "Прайс-листы" },
       { key: "ready-builds", label: "Готовые конфигурации" },
+      { key: "customer-orders", label: "Заказы покупателей" },
     ];
   }
   if (role === "seller") {
@@ -60,6 +64,7 @@ function tabsForRole(role: string): TabDef[] {
       { key: "price-lists", label: "Прайс-листы" },
       { key: "components", label: "Компоненты" },
       { key: "ready-builds", label: "Готовые конфигурации" },
+      { key: "customer-orders", label: "Заказы покупателей" },
     ];
   }
   return [
@@ -141,9 +146,19 @@ export default function Profile() {
   };
 
   const handleCancelOrder = async (id: string) => {
-    await deleteOrderRemote(id);
+    await cancelOrderRemote(id);
     setOrders(await fetchOrders(user!.id));
     toast("Заказ отменён", "info");
+  };
+
+  const handleBuyOwnOrder = async (id: string) => {
+    try {
+      await buyOwnOrder(id);
+      setOrders(await fetchOrders(user!.id));
+      toast("Заказ передан в сборку");
+    } catch {
+      toast("Не удалось оформить покупку", "error");
+    }
   };
 
   const beginEdit = () => {
@@ -413,7 +428,7 @@ export default function Profile() {
                     <span className="text-sm text-muted-foreground">
                       {formatDate(o.createdAt)}
                     </span>
-                    <Badge variant={statusTone(o.status)}>{statusLabel(o.status)}</Badge>
+                    <Badge variant={orderStatusTone(o.status)}>{orderStatusLabel(o.status)}</Badge>
                   </div>
                   <div className="flex flex-col">
                     {o.items.map((it, i) => (
@@ -432,8 +447,18 @@ export default function Profile() {
                     <span>Итого</span>
                     <span className="font-bold">{formatPrice(o.total)}</span>
                   </div>
-                  {o.status !== "done" ? (
-                    <div className="flex justify-end border-t pt-3">
+                  {o.status !== "done" && o.status !== "cancelled" ? (
+                    <div className="flex flex-wrap items-center justify-end gap-3 border-t pt-3">
+                      {isInstallmentRejected(o.status) ? (
+                        <span className="mr-auto text-sm text-muted-foreground">
+                          Рассрочка недоступна
+                        </span>
+                      ) : null}
+                      {isInstallmentRejected(o.status) ? (
+                        <Button size="sm" onClick={() => handleBuyOwnOrder(o.id)}>
+                          Купить за свой счёт
+                        </Button>
+                      ) : null}
                       <Button
                         variant="destructive"
                         size="sm"
@@ -481,6 +506,8 @@ export default function Profile() {
         <ProfilePriceLists sellerId={user.id} isAdmin={user?.role === "admin"} />
       ) : activeTab === "ready-builds" ? (
         <ProfileReadyBuilds sellerId={user.id} isAdmin={user?.role === "admin"} />
+      ) : activeTab === "customer-orders" ? (
+        <ProfileSellerOrders sellerId={user.id} isAdmin={user?.role === "admin"} />
       ) : activeTab === "brands" ? (
         <section aria-label="Бренды" className="flex flex-col gap-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -560,31 +587,4 @@ export default function Profile() {
 
 function sourceLabel(s: Config["source"]): string {
   return s === "ready" ? "Из готовых" : s === "auto" ? "Автоподбор" : "Кастом";
-}
-
-function statusTone(s: Order["status"]): "success" | "warning" | "info" | "neutral" {
-  switch (s) {
-    case "new":
-      return "warning";
-    case "confirmed":
-      return "info";
-    case "delivery":
-      return "info";
-    case "done":
-      return "success";
-    case "alpha":
-      return "info";
-    default:
-      return "neutral";
-  }
-}
-
-function statusLabel(s: Order["status"]): string {
-  return {
-    new: "Новый",
-    confirmed: "Подтверждён",
-    delivery: "В доставке",
-    done: "Выполнен",
-    alpha: "На рассмотрении в Альфа-Банке",
-  }[s] ?? s;
 }

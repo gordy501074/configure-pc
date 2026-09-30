@@ -493,7 +493,208 @@ export function migratePriceLists(db: Database.Database): void {
   }
 }
 
-// ---- v8: config.ready_pc_id (link a saved ready config to its source build) ----
+// ---- v9: order_item seller/category snapshots + cancelled status ----
+
+/** Columns actually present on a table (via PRAGMA, not the stored DDL). */
+function tableColumns(db: Database.Database, name: string): Set<string> {
+  const rows = db.prepare(`PRAGMA table_info(${name})`).all() as { name: string }[];
+  return new Set(rows.map((r) => r.name));
+}
+
+/** True when `order_item.seller_id` has its FK to `user_account` (SET NULL). */
+function orderItemHasSellerFk(db: Database.Database): boolean {
+  const fks = db.prepare(`PRAGMA foreign_key_list(order_item)`).all() as {
+    from: string;
+    table: string;
+  }[];
+  return fks.some((f) => f.from === "seller_id" && f.table === "user_account");
+}
+
+/**
+ * Idempotent v9 migration for seller attribution + soft-cancel:
+ *  - `order_item`: add nullable `seller_id` (FK -> user_account ON DELETE SET NULL)
+ *    and `category` (no CHECK; historical values must not block inserts). The
+ *    table is rebuilt (not `ALTER TABLE ADD COLUMN`) so the `seller_id` FK from
+ *    `schema.sql` is actually created on upgraded databases (and self-heals a DB
+ *    that was migrated by an earlier build that only added the bare column);
+ *  - `order_header`: widen the status CHECK to include `'cancelled'` by rebuilding
+ *    the table via the documented FK-off recipe (CREATE temp -> INSERT -> DROP ->
+ *    RENAME), then verify with `PRAGMA foreign_key_check`;
+ *  - best-effort backfill: `seller_id` for `kind='ready'` lines from
+ *    `ready_pc.seller_id`, and `category` for `kind='config'` lines from `part`.
+ *    Config seller attribution is unrecoverable historically (ref_id is a part id,
+ *    not a config id) and stays NULL ("Без продавца").
+ */
+export function migrateOrderAttributionAndCancel(db: Database.Database): void {
+  const cols = tableColumns(db, "order_item");
+  const needsSeller = !cols.has("seller_id");
+  const needsCategory = !cols.has("category");
+  const needsSellerFk = !orderItemHasSellerFk(db);
+  const needsItemRebuild = needsSeller || needsCategory || needsSellerFk;
+  const header = tableSql(db, "order_header");
+  const needsCancelStatus = !header || !/\bcancelled\b/.test(header);
+
+  if (!needsItemRebuild && !needsCancelStatus) {
+    // Fresh schema already ships the columns/CHECK/FK; still ensure the index.
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_order_item_seller ON order_item(seller_id)`);
+    return;
+  }
+
+  const stamp = `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+  const tmpHeader = `new_order_header_${stamp}`;
+  const tmpItem = `new_order_item_${stamp}`;
+  // Preserve any already-present column values; the newly added ones start NULL.
+  const sellerCol = needsSeller ? "NULL" : "seller_id";
+  const categoryCol = needsCategory ? "NULL" : "category";
+
+  db.pragma("foreign_keys = OFF");
+  db.pragma("defer_foreign_keys = ON");
+  try {
+    db.transaction(() => {
+      // 1. Rebuild order_header with the extended status CHECK.
+      if (needsCancelStatus) {
+        db.exec(`
+          CREATE TABLE ${tmpHeader} (
+            order_id      TEXT PRIMARY KEY,
+            user_id       TEXT NOT NULL,
+            total_kopecks INTEGER NOT NULL CHECK (total_kopecks >= 0),
+            status        TEXT NOT NULL DEFAULT 'new' CHECK (status IN ('new','confirmed','delivery','done','alpha','cancelled')),
+            address       TEXT NOT NULL,
+            user_name     TEXT NOT NULL,
+            created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+            FOREIGN KEY (user_id) REFERENCES user_account(user_id) ON DELETE RESTRICT
+          ) STRICT
+        `);
+        db.exec(`
+          INSERT INTO ${tmpHeader} (order_id, user_id, total_kopecks, status, address, user_name, created_at)
+          SELECT order_id, user_id, total_kopecks, status, address, user_name, created_at
+          FROM order_header
+        `);
+        db.exec(`DROP TABLE order_header`);
+        // RENAME rewrites the child order_item FK to the new order_header.
+        db.exec(`ALTER TABLE ${tmpHeader} RENAME TO order_header`);
+        db.exec(`CREATE INDEX IF NOT EXISTS idx_order_user ON order_header(user_id)`);
+      }
+
+      // 2. Rebuild order_item with the new columns AND the declared seller FK
+      //    (ALTER TABLE ADD COLUMN cannot create a table-level FK in SQLite).
+      if (needsItemRebuild) {
+        db.exec(`
+          CREATE TABLE ${tmpItem} (
+            order_id      TEXT NOT NULL,
+            position      INTEGER NOT NULL,
+            kind          TEXT NOT NULL CHECK (kind IN ('ready','config')),
+            ref_id        TEXT NOT NULL,
+            name          TEXT NOT NULL,
+            price_kopecks INTEGER NOT NULL CHECK (price_kopecks >= 0),
+            count         INTEGER NOT NULL DEFAULT 1 CHECK (count BETWEEN 1 AND 9999),
+            seller_id     TEXT,
+            category      TEXT,
+            PRIMARY KEY (order_id, position),
+            FOREIGN KEY (order_id) REFERENCES order_header(order_id) ON DELETE CASCADE,
+            FOREIGN KEY (seller_id) REFERENCES user_account(user_id) ON DELETE SET NULL
+          ) STRICT, WITHOUT ROWID
+        `);
+        db.exec(`
+          INSERT INTO ${tmpItem} (order_id, position, kind, ref_id, name, price_kopecks, count, seller_id, category)
+          SELECT order_id, position, kind, ref_id, name, price_kopecks, count, ${sellerCol}, ${categoryCol}
+          FROM order_item
+        `);
+        db.exec(`DROP TABLE order_item`);
+        db.exec(`ALTER TABLE ${tmpItem} RENAME TO order_item`);
+      }
+
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_order_item_seller ON order_item(seller_id)`);
+    })();
+
+    // 3. Best-effort backfill (idempotent via IS NULL guards; safe when catalog
+    //    rows were deleted — the correlated subselect then yields NULL). Runs
+    //    whenever order_item was rebuilt (columns may be freshly NULL).
+    if (needsItemRebuild) {
+      db.exec(`
+        UPDATE order_item
+        SET seller_id = (
+          SELECT rp.seller_id FROM ready_pc rp WHERE rp.ready_pc_id = order_item.ref_id
+        )
+        WHERE kind = 'ready' AND seller_id IS NULL
+      `);
+      db.exec(`
+        UPDATE order_item
+        SET category = (
+          SELECT p.category FROM part p WHERE p.part_id = order_item.ref_id
+        )
+        WHERE kind = 'config' AND category IS NULL
+      `);
+    }
+
+    const integrity = db.exec(`PRAGMA foreign_key_check;`) as unknown as [];
+    if (Array.isArray(integrity) && integrity.length > 0) {
+      throw new Error(
+        `order attribution migration left FK violations: ${JSON.stringify(integrity)}`,
+      );
+    }
+  } finally {
+    db.pragma("foreign_keys = ON");
+  }
+}
+
+/** True when `order_header.status` CHECK already allows 'alpha_rejected'. */
+function orderHeaderHasRejectedStatus(db: Database.Database): boolean {
+  const header = tableSql(db, "order_header");
+  return !!header && /\balpha_rejected\b/.test(header);
+}
+
+/**
+ * Idempotent v10 migration: widen the `order_header` status CHECK to include
+ * `'alpha_rejected'` (installment declined by Alfa-Bank; the order stays alive
+ * and the customer may buy it at their own expense). SQLite cannot alter a CHECK
+ * in place, so the table is rebuilt via the documented FK-off recipe
+ * (CREATE temp -> INSERT -> DROP -> RENAME) and verified with
+ * `PRAGMA foreign_key_check`. The renamed table re-points the child
+ * `order_item` FK to the real `order_header`.
+ */
+export function migrateOrderRejectedStatus(db: Database.Database): void {
+  if (orderHeaderHasRejectedStatus(db)) return;
+
+  const stamp = `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+  const tmpHeader = `new_order_header_${stamp}`;
+
+  db.pragma("foreign_keys = OFF");
+  db.pragma("defer_foreign_keys = ON");
+  try {
+    db.transaction(() => {
+      db.exec(`
+        CREATE TABLE ${tmpHeader} (
+          order_id      TEXT PRIMARY KEY,
+          user_id       TEXT NOT NULL,
+          total_kopecks INTEGER NOT NULL CHECK (total_kopecks >= 0),
+          status        TEXT NOT NULL DEFAULT 'new' CHECK (status IN ('new','confirmed','delivery','done','alpha','alpha_rejected','cancelled')),
+          address       TEXT NOT NULL,
+          user_name     TEXT NOT NULL,
+          created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+          FOREIGN KEY (user_id) REFERENCES user_account(user_id) ON DELETE RESTRICT
+        ) STRICT
+      `);
+      db.exec(`
+        INSERT INTO ${tmpHeader} (order_id, user_id, total_kopecks, status, address, user_name, created_at)
+        SELECT order_id, user_id, total_kopecks, status, address, user_name, created_at
+        FROM order_header
+      `);
+      db.exec(`DROP TABLE order_header`);
+      db.exec(`ALTER TABLE ${tmpHeader} RENAME TO order_header`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_order_user ON order_header(user_id)`);
+    })();
+
+    const integrity = db.exec(`PRAGMA foreign_key_check;`) as unknown as [];
+    if (Array.isArray(integrity) && integrity.length > 0) {
+      throw new Error(
+        `order rejected-status migration left FK violations: ${JSON.stringify(integrity)}`,
+      );
+    }
+  } finally {
+    db.pragma("foreign_keys = ON");
+  }
+}
 
 /** True when `config` already has the `ready_pc_id` column. */
 function configReadyLinkIsMigrated(db: Database.Database): boolean {

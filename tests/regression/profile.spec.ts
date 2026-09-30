@@ -38,7 +38,7 @@ test.describe("regression: profile", () => {
     await expect(page.getByText("Моя офисная сборка")).toBeVisible();
   });
 
-  test("profile orders tab lists orders and cancels one", async ({ page, request }) => {
+  test("profile orders tab lists orders and soft-cancels one", async ({ page, request }) => {
     const email = "ord-owner@example.com";
     const { id, sessionId } = await loginAs(page, request, email, "Заказчик");
     // Seed an order via API bound to the same user (requireCustomer needs cookie).
@@ -58,7 +58,35 @@ test.describe("regression: profile", () => {
     await expect(page.getByText("Confi Office 3000")).toBeVisible();
     // Cancel the order (status "new" => cancel button present).
     await page.getByRole("button", { name: "Отменить" }).click();
-    await expect(page.getByText("Confi Office 3000")).toHaveCount(0);
+    // Soft-cancel: the order stays in history, now badged "Отменён".
+    await expect(page.getByText("Confi Office 3000")).toBeVisible();
+    await expect(page.getByText("Отменён", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Отменить" })).toHaveCount(0);
+  });
+
+  test("cannot cancel another user's order (403)", async ({ request }) => {
+    const owner = await request.post("/api/session", {
+      data: { email: "ord-owner2@example.com", name: "Владелец2" },
+    });
+    const ownerBody = (await owner.json()) as { user: { id: string }; sessionId: string };
+    await request.put(`/api/orders/ord-foreign-1?userId=${encodeURIComponent(ownerBody.user.id)}`, {
+      headers: { cookie: `confi_session=${ownerBody.sessionId}` },
+      data: {
+        status: "new",
+        address: "Адрес",
+        userName: "Владелец2",
+        items: [{ kind: "ready", refId: "ready-office", name: "Confi Office 3000", price: 54900, count: 1 }],
+      },
+    });
+
+    const stranger = await request.post("/api/session", {
+      data: { email: "ord-stranger@example.com", name: "Чужой" },
+    });
+    const strangerBody = (await stranger.json()) as { sessionId: string };
+    const res = await request.post("/api/orders/ord-foreign-1/cancel", {
+      headers: { cookie: `confi_session=${strangerBody.sessionId}` },
+    });
+    expect(res.status()).toBe(403);
   });
 
   test("profile header settings opens theme + notifications", async ({ page, request }) => {

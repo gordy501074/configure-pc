@@ -125,7 +125,14 @@ export default function PcCard() {
       state: {
         orderTitle: pc.name,
         total: stats.totalPrice,
-        line: { kind: "ready", refId: pc.id, name: pc.name, price: stats.totalPrice, count: 1 },
+        line: {
+          kind: "ready",
+          refId: pc.id,
+          name: pc.name,
+          price: stats.totalPrice,
+          count: 1,
+          sellerId: pc.sellerId ?? undefined,
+        },
       },
     });
   };
@@ -240,6 +247,7 @@ export default function PcCard() {
                         name: pc.name,
                         price: stats.totalPrice,
                         count: 1,
+                        sellerId: pc.sellerId ?? undefined,
                       },
                     }}
                   />

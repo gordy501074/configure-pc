@@ -1,7 +1,7 @@
--- Confi SQLite schema (STRICT, WAL). Version 8.
+-- Confi SQLite schema (STRICT, WAL). Version 10.
 -- DDL per plan section 2. Applied idempotently by db:init / db:seed.
 
-PRAGMA user_version = 8;
+PRAGMA user_version = 10;
 PRAGMA journal_mode = WAL;
 
 -- Vendors (trademarks) referenced by parts. Populated on the fly from part.brand.
@@ -99,7 +99,7 @@ CREATE TABLE IF NOT EXISTS order_header (
   order_id      TEXT PRIMARY KEY,
   user_id       TEXT NOT NULL,
   total_kopecks INTEGER NOT NULL CHECK (total_kopecks >= 0),
-  status        TEXT NOT NULL DEFAULT 'new' CHECK (status IN ('new','confirmed','delivery','done','alpha')),
+  status        TEXT NOT NULL DEFAULT 'new' CHECK (status IN ('new','confirmed','delivery','done','alpha','alpha_rejected','cancelled')),
   address       TEXT NOT NULL,
   user_name     TEXT NOT NULL,
   created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
@@ -114,8 +114,14 @@ CREATE TABLE IF NOT EXISTS order_item (
   name          TEXT NOT NULL,
   price_kopecks INTEGER NOT NULL CHECK (price_kopecks >= 0),
   count         INTEGER NOT NULL DEFAULT 1 CHECK (count BETWEEN 1 AND 9999),
+  -- Seller attribution snapshot (resolved at checkout: ready -> ready_pc.seller_id,
+  -- config -> config.seller_id). Nullable for legacy/history rows.
+  seller_id     TEXT,
+  -- Category snapshot for per-category analytics (no CHECK: tolerate historical values).
+  category      TEXT,
   PRIMARY KEY (order_id, position),
-  FOREIGN KEY (order_id) REFERENCES order_header(order_id) ON DELETE CASCADE
+  FOREIGN KEY (order_id) REFERENCES order_header(order_id) ON DELETE CASCADE,
+  FOREIGN KEY (seller_id) REFERENCES user_account(user_id) ON DELETE SET NULL
 ) STRICT, WITHOUT ROWID;
 
 CREATE TABLE IF NOT EXISTS review (

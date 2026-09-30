@@ -3,6 +3,7 @@
 import type { Database } from "better-sqlite3";
 import type {
   AppSettingsDto,
+  ComponentCategory,
   ConfigDto,
   ConfigPartDto,
   ConfigRow,
@@ -92,7 +93,22 @@ export interface UserDataRepository {
   // orders
   listOrders(userId: string): OrderDto[];
   saveOrder(input: SaveOrderInput): OrderDto;
-  deleteOrder(id: string): boolean;
+  /** Owning user id of an order, or null when it does not exist. */
+  getOrderOwner(id: string): string | null;
+  /** Soft-cancel: set status='cancelled' (keeps the row). */
+  cancelOrder(id: string): boolean;
+
+  // orders (seller / admin)
+  /** Orders containing at least one line owned by `sellerId`, with only that seller's lines. */
+  listOrdersForSeller(sellerId: string): OrderDto[];
+  /** All orders in a given status (admin, e.g. 'alpha' installment requests). */
+  listOrdersByStatus(status: OrderStatus): OrderDto[];
+  /** Whether the order contains at least one line attributed to the seller. */
+  orderHasSeller(orderId: string, sellerId: string): boolean;
+  /** Current status of an order, or null when it does not exist. */
+  getOrderStatus(orderId: string): OrderStatus | null;
+  /** Set the whole order's status; false when the order does not exist. */
+  setOrderStatus(orderId: string, status: OrderStatus): boolean;
 
   // reviews
   listReviews(): ReviewDto[];
@@ -188,16 +204,37 @@ export function createUserRepository(db: Database): UserDataRepository {
        user_id=excluded.user_id, total_kopecks=excluded.total_kopecks, status=excluded.status,
        address=excluded.address, user_name=excluded.user_name`,
   );
-  const delOrderStmt = db.prepare(`DELETE FROM order_header WHERE order_id = ?`);
+  const cancelOrderStmt = db.prepare(
+    `UPDATE order_header SET status = 'cancelled' WHERE order_id = ?`,
+  );
+  const readySellerStmt = db.prepare(
+    `SELECT seller_id FROM ready_pc WHERE ready_pc_id = ?`,
+  );
   const orderItemsStmt = db.prepare(
     `SELECT * FROM order_item WHERE order_id = ? ORDER BY position`,
   );
   const insertOrderItemStmt = db.prepare(
-    `INSERT INTO order_item (order_id, position, kind, ref_id, name, price_kopecks, count)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO order_item (order_id, position, kind, ref_id, name, price_kopecks, count, seller_id, category)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
   const delOrderItemsStmt = db.prepare(
     `DELETE FROM order_item WHERE order_id = ?`,
+  );
+  // Orders that contain at least one item attributed to the seller.
+  const sellerOrdersStmt = db.prepare(
+    `SELECT DISTINCT h.* FROM order_header h
+     JOIN order_item i ON i.order_id = h.order_id
+     WHERE i.seller_id = ?
+     ORDER BY h.created_at DESC`,
+  );
+  const ordersByStatusStmt = db.prepare(
+    `SELECT * FROM order_header WHERE status = ? ORDER BY created_at DESC`,
+  );
+  const orderHasSellerStmt = db.prepare(
+    `SELECT 1 FROM order_item WHERE order_id = ? AND seller_id = ? LIMIT 1`,
+  );
+  const setOrderStatusStmt = db.prepare(
+    `UPDATE order_header SET status = ? WHERE order_id = ?`,
   );
 
   // --- reviews ---
@@ -238,6 +275,51 @@ export function createUserRepository(db: Database): UserDataRepository {
   );
 
   const now = (): string => new Date().toISOString();
+
+  /** Map an order_item row to its API DTO, preserving attribution snapshots. */
+  function orderItemToDto(i: OrderItemRow): OrderItemDto {
+    return {
+      kind: i.kind,
+      refId: i.ref_id,
+      name: i.name,
+      price: i.price_kopecks / 100,
+      count: i.count,
+      sellerId: i.seller_id ?? undefined,
+      category: (i.category as ComponentCategory | null) ?? undefined,
+    };
+  }
+
+  /**
+   * Load order_item rows for many orders in a single query (avoids N+1), grouped
+   * by order_id and ordered by position within each order.
+   */
+  function orderItemsByOrderId(orderIds: string[]): Map<string, OrderItemRow[]> {
+    const grouped = new Map<string, OrderItemRow[]>();
+    if (orderIds.length === 0) return grouped;
+    const placeholders = orderIds.map(() => "?").join(",");
+    const rows = db
+      .prepare(
+        `SELECT * FROM order_item WHERE order_id IN (${placeholders}) ORDER BY order_id, position`,
+      )
+      .all(...orderIds) as OrderItemRow[];
+    for (const row of rows) {
+      const list = grouped.get(row.order_id);
+      if (list) list.push(row);
+      else grouped.set(row.order_id, [row]);
+    }
+    return grouped;
+  }
+
+  /** Map order rows to DTOs, loading all their items with a single query. */
+  function orderRowsToDtos(rows: OrderRow[]): OrderDto[] {
+    const itemsByOrder = orderItemsByOrderId(rows.map((r) => r.order_id));
+    return rows.map((r) =>
+      orderToDto(
+        r,
+        (itemsByOrder.get(r.order_id) ?? []).map(orderItemToDto),
+      ),
+    );
+  }
 
   function configPartsFor(config: ConfigRow): ConfigPartDto[] {
     const configId = config.config_id;
@@ -483,18 +565,7 @@ export function createUserRepository(db: Database): UserDataRepository {
 
     listOrders(userId) {
       const rows = listOrdersStmt.all(userId) as OrderRow[];
-      return rows.map((r) => {
-        const items = (orderItemsStmt.all(r.order_id) as OrderItemRow[]).map(
-          (i): OrderItemDto => ({
-            kind: i.kind,
-            refId: i.ref_id,
-            name: i.name,
-            price: i.price_kopecks / 100,
-            count: i.count,
-          }),
-        );
-        return orderToDto(r, items);
-      });
+      return orderRowsToDtos(rows);
     },
 
     saveOrder(input) {
@@ -515,6 +586,14 @@ export function createUserRepository(db: Database): UserDataRepository {
         });
         delOrderItemsStmt.run(input.id);
         input.items.forEach((it, pos) => {
+          // Ready lines fall back to the build's owner when the client omitted it.
+          let sellerId = it.sellerId ?? null;
+          if (!sellerId && it.kind === "ready") {
+            const resolved = readySellerStmt.get(it.refId) as
+              | { seller_id: string | null }
+              | undefined;
+            sellerId = resolved?.seller_id ?? null;
+          }
           insertOrderItemStmt.run(
             input.id,
             pos,
@@ -523,24 +602,56 @@ export function createUserRepository(db: Database): UserDataRepository {
             it.name,
             Math.round(it.price * 100),
             it.count,
+            sellerId,
+            it.category ?? null,
           );
         });
       });
       transaction();
       const items = (orderItemsStmt.all(input.id) as OrderItemRow[]).map(
-        (i): OrderItemDto => ({
-          kind: i.kind,
-          refId: i.ref_id,
-          name: i.name,
-          price: i.price_kopecks / 100,
-          count: i.count,
-        }),
+        orderItemToDto,
       );
       return orderToDto(getOrderStmt.get(input.id) as OrderRow, items);
     },
 
-    deleteOrder(id) {
-      const info = delOrderStmt.run(id);
+    getOrderOwner(id) {
+      const row = getOrderStmt.get(id) as OrderRow | undefined;
+      return row?.user_id ?? null;
+    },
+
+    cancelOrder(id) {
+      const info = cancelOrderStmt.run(id);
+      return info.changes > 0;
+    },
+
+    listOrdersForSeller(sellerId) {
+      const rows = sellerOrdersStmt.all(sellerId) as OrderRow[];
+      const itemsByOrder = orderItemsByOrderId(rows.map((r) => r.order_id));
+      return rows.map((r) => {
+        const items = (itemsByOrder.get(r.order_id) ?? [])
+          .filter((i) => i.seller_id === sellerId)
+          .map(orderItemToDto);
+        const total = items.reduce((s, it) => s + it.price * it.count, 0);
+        return { ...orderToDto(r, items), total };
+      });
+    },
+
+    listOrdersByStatus(status) {
+      const rows = ordersByStatusStmt.all(status) as OrderRow[];
+      return orderRowsToDtos(rows);
+    },
+
+    orderHasSeller(orderId, sellerId) {
+      return !!orderHasSellerStmt.get(orderId, sellerId);
+    },
+
+    getOrderStatus(orderId) {
+      const row = getOrderStmt.get(orderId) as OrderRow | undefined;
+      return row?.status ?? null;
+    },
+
+    setOrderStatus(orderId, status) {
+      const info = setOrderStatusStmt.run(status, orderId);
       return info.changes > 0;
     },
 

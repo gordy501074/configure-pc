@@ -100,7 +100,7 @@ export default function AutoResult() {
 
   const checkout = () => {
     navigate("/checkout", {
-      state: { orderTitle: cfg.name, total: stats.totalPrice, config: cfg },
+      state: { orderTitle: cfg.name, total: stats.totalPrice, config: { ...cfg, sellerId } },
     });
   };
 
@@ -174,7 +174,7 @@ export default function AutoResult() {
 
         {isCustomer ? (
           <div className="max-w-sm">
-            <InstallmentPlan total={stats.totalPrice} state={{ config: cfg }} />
+            <InstallmentPlan total={stats.totalPrice} state={{ config: { ...cfg, sellerId } }} />
           </div>
         ) : null}
 

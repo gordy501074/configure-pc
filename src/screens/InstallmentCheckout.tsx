@@ -16,7 +16,15 @@ interface InstallmentState {
   orderTitle?: string;
   total?: number;
   config?: Config;
-  line?: { kind: "ready" | "config"; refId: string; name: string; price: number; count: number };
+  line?: {
+    kind: "ready" | "config";
+    refId: string;
+    name: string;
+    price: number;
+    count: number;
+    sellerId?: string;
+    category?: ComponentCategory;
+  };
 }
 
 const MONTH_NAMES = [
@@ -66,6 +74,8 @@ export default function InstallmentCheckout() {
           name: state.line.name,
           price: state.line.price,
           count: state.line.count,
+          sellerId: state.line.sellerId,
+          category: state.line.category,
         },
       ]
     : parts.filter((cp): cp is { category: ComponentCategory; part: Part } => !!cp.part).map(({ part }) => ({
@@ -74,6 +84,8 @@ export default function InstallmentCheckout() {
         name: part.name,
         price: part.price ?? 0,
         count: 1,
+        sellerId: config?.sellerId,
+        category: part.category,
       }));
 
   const validate = () => {
@@ -103,6 +115,8 @@ export default function InstallmentCheckout() {
         name: it.name,
         price: it.price,
         count: it.count,
+        sellerId: it.sellerId,
+        category: it.category,
       })),
       total,
       status: "alpha",

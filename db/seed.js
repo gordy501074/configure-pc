@@ -2,14 +2,14 @@
 // Node 24 native TS type-stripping imports the mock directly.
 //
 // Usage: npm run db:seed   (or: node db/seed.js)
-// Applies db/schema.sql (user_version=7) + db/migrate.ts before seeding.
+// Applies db/schema.sql (user_version=10) + db/migrate.ts before seeding.
 
 import Database from "better-sqlite3";
 import { readFileSync, appendFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { components, readyPcs, seededReviews } from "../src/data/mock.ts";
-import { migratePriceLists, migrateSellerBrandDescription, migrateUserAccount, migrateVendorAndAvailability, migrateConfigReadyLink } from "./migrate.ts";
+import { migratePriceLists, migrateSellerBrandDescription, migrateUserAccount, migrateVendorAndAvailability, migrateConfigReadyLink, migrateOrderAttributionAndCancel, migrateOrderRejectedStatus } from "./migrate.ts";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const DB_PATH = join(root, "db", "confi.db");
@@ -56,6 +56,8 @@ migrateSellerBrandDescription(db);
 migrateVendorAndAvailability(db);
 migratePriceLists(db);
 migrateConfigReadyLink(db);
+migrateOrderAttributionAndCancel(db);
+migrateOrderRejectedStatus(db);
 
 /** Validate a single part row; returns null to skip. */
 function validatePart(p) {
