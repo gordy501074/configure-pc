@@ -160,6 +160,34 @@ check("order save", order.total === 139900 && order.address === "Москва");
 // Attribution: server resolves ready-line seller from ready_pc.seller_id.
 check("order item seller resolved", order.items?.[0]?.sellerId === "usr-seller");
 
+// Deleting a user who still owns orders is blocked with a detailed reason.
+const delWithOrders = await fetch(base + "/api/users/usr-test", {
+  method: "DELETE", headers: { Cookie: `confi_session=${adminSession.sessionId}` },
+});
+const delWithOrdersBody = await delWithOrders.json();
+check(
+  "admin delete user with orders 409 + detail",
+  delWithOrders.status === 409 &&
+    delWithOrdersBody.error === "user_has_dependencies" &&
+    delWithOrdersBody.details?.dependencies?.orders > 0 &&
+    typeof delWithOrdersBody.details?.message === "string" &&
+    delWithOrdersBody.details.message.length > 0,
+);
+
+// The seeded seller owns ready PCs / price lists / brands, so it must be undeletable.
+const delSeller = await fetch(base + "/api/users/usr-seller", {
+  method: "DELETE", headers: { Cookie: `confi_session=${adminSession.sessionId}` },
+});
+const delSellerBody = await delSeller.json();
+check(
+  "admin delete protected seller 409 + detail",
+  delSeller.status === 409 &&
+    delSellerBody.error === "user_has_dependencies" &&
+    (delSellerBody.details?.dependencies?.readyPcs > 0 ||
+      delSellerBody.details?.dependencies?.priceLists > 0 ||
+      delSellerBody.details?.dependencies?.brands > 0),
+);
+
 // soft-cancel via explicit endpoint keeps the row and flips status
 const cancelRes = await fetch(base + "/api/orders/ord-1/cancel?userId=usr-test", {
   method: "POST", headers: { ...jh, Cookie: `confi_session=${session.sessionId}` },

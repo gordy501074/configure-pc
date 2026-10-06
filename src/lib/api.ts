@@ -35,8 +35,13 @@ async function req<T>(
   if (!res.ok) {
     let message = `HTTP ${res.status}`;
     try {
-      const body = (await res.json()) as { error?: string };
-      if (body.error) message = body.error;
+      const body = (await res.json()) as {
+        error?: string;
+        details?: { message?: string };
+      };
+      // Prefer a human-readable detail; fall back to the machine error code.
+      if (body.details?.message) message = body.details.message;
+      else if (body.error) message = body.error;
     } catch {
       /* ignore */
     }
@@ -743,6 +748,43 @@ export async function reactivatePart(id: string): Promise<void> {
 
 export async function initializeCatalog(): Promise<{ inserted: number; deleted: number }> {
   return req<{ inserted: number; deleted: number }>("/catalog/initialize", {
+    method: "POST",
+  });
+}
+
+// ---- Uploads (component images) ----
+
+/** Upload a data-URL image; returns the served `/api/uploads/<file>` URL. */
+export async function uploadPartImage(dataUrl: string): Promise<string> {
+  const r = await req<{ url: string }>("/uploads", {
+    method: "POST",
+    body: JSON.stringify({ dataUrl }),
+  });
+  return r.url;
+}
+
+export interface UploadEntry {
+  file: string;
+  url: string;
+  size: number;
+  modifiedAt: number;
+  used: boolean;
+  partId?: string;
+  partName?: string;
+}
+
+export async function fetchUploads(): Promise<UploadEntry[]> {
+  return req<UploadEntry[]>("/admin/uploads");
+}
+
+export async function deleteUpload(file: string): Promise<void> {
+  await req<void>(`/admin/uploads/${encodeURIComponent(file)}`, {
+    method: "DELETE",
+  });
+}
+
+export async function pruneUploads(): Promise<{ deleted: number; freedBytes: number }> {
+  return req<{ deleted: number; freedBytes: number }>("/admin/uploads/prune", {
     method: "POST",
   });
 }

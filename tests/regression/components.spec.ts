@@ -7,6 +7,10 @@ import { test, expect } from "@playwright/test";
 import type { Page, APIRequestContext } from "@playwright/test";
 import { APP_BASE } from "../helpers/testDb";
 
+// 1x1 transparent PNG (valid magic bytes).
+const PNG_DATA_URL =
+  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
+
 async function login(
   page: Page,
   request: APIRequestContext,
@@ -96,5 +100,141 @@ test.describe("regression: components & vendors", () => {
     const list = await parts.json();
     expect(Array.isArray(list)).toBe(true);
     expect(list.length).toBeGreaterThan(0);
+  });
+
+  test("seller uploads an image, attaches it to a component, sees it in the configurator", async ({ page, request }) => {
+    const seller = await request.post("/api/session", { data: { email: "user@company.com", name: "Продавец Confi" } });
+    const { sessionId } = await seller.json();
+    const cookie = `confi_session=${sessionId}`;
+    await page.context().addCookies([
+      { name: "confi_session", value: sessionId, url: APP_BASE.replace(/\/$/, "") },
+    ]);
+
+    // Upload via the API (seller).
+    const up = await request.post("/api/uploads", { headers: { cookie }, data: { dataUrl: PNG_DATA_URL } });
+    expect(up.status()).toBe(201);
+    const { url } = await up.json();
+    expect(url).toMatch(/^\/api\/uploads\/upload-[\w-]+\.png$/);
+
+    // The stored file is served statically.
+    const served = await request.get(url);
+    expect(served.ok()).toBeTruthy();
+
+    // Attach the image to a seeded, priced component (no new catalog entries).
+    const pinned = await request.patch("/api/components/cpu-r5-5600", {
+      headers: { cookie },
+      data: { image: url },
+    });
+    expect(pinned.ok()).toBeTruthy();
+    expect((await pinned.json()).image).toBe(url);
+
+    // The image renders in the configurator: picker row + selected slot card.
+    await page.goto("/config");
+    await page.getByRole("button", { name: /Выбрать процессор/i }).click();
+    await expect(page.locator(`img[src="${url}"]`).first()).toBeVisible();
+    await page.getByRole("button", { name: /AMD Ryzen 5 5600/ }).click();
+    await expect(page.locator(`img[src="${url}"]`)).toHaveCount(1);
+
+    // Restore the seeded part so later tests are unaffected.
+    await request.patch("/api/components/cpu-r5-5600", { headers: { cookie }, data: { image: "" } });
+  });
+
+  test("PATCH clears a component image", async ({ request }) => {
+    const seller = await request.post("/api/session", { data: { email: "user@company.com", name: "Продавец Confi" } });
+    const cookie = `confi_session=${(await seller.json()).sessionId}`;
+    const up = await (await request.post("/api/uploads", { headers: { cookie }, data: { dataUrl: PNG_DATA_URL } })).json();
+    await request.patch("/api/components/cpu-r5-5600", { headers: { cookie }, data: { image: up.url } });
+    const cleared = await request.patch("/api/components/cpu-r5-5600", { headers: { cookie }, data: { image: "" } });
+    expect(cleared.ok()).toBeTruthy();
+    expect((await cleared.json()).image).toBeUndefined();
+  });
+
+  test("clearing one part keeps an upload still referenced by another part", async ({ request }) => {
+    const seller = await request.post("/api/session", { data: { email: "user@company.com", name: "Продавец Confi" } });
+    const cookie = `confi_session=${(await seller.json()).sessionId}`;
+    const up = await (await request.post("/api/uploads", { headers: { cookie }, data: { dataUrl: PNG_DATA_URL } })).json();
+
+    // Two seeded parts share the same upload.
+    await request.patch("/api/components/cpu-r5-5600", { headers: { cookie }, data: { image: up.url } });
+    await request.patch("/api/components/gpu-rx-7600", { headers: { cookie }, data: { image: up.url } });
+
+    // Clearing one must NOT delete the shared file while the other still uses it.
+    await request.patch("/api/components/cpu-r5-5600", { headers: { cookie }, data: { image: "" } });
+    expect((await request.get(up.url)).ok()).toBeTruthy();
+
+    // Clean up: detach the second reference so prune can reclaim the file.
+    await request.patch("/api/components/gpu-rx-7600", { headers: { cookie }, data: { image: "" } });
+    expect((await request.get(up.url)).ok()).toBe(false);
+  });
+
+  test("customer cannot upload an image (403)", async ({ request }) => {
+    const res = await request.post("/api/session", { data: { email: "customer@example.com", name: "Клиент" } });
+    const { sessionId } = await res.json();
+    const up = await request.post("/api/uploads", {
+      headers: { cookie: `confi_session=${sessionId}` },
+      data: { dataUrl: PNG_DATA_URL },
+    });
+    expect(up.status()).toBe(403);
+  });
+
+  test("upload rejects non-images and disguised files", async ({ request }) => {
+    const seller = await request.post("/api/session", { data: { email: "user@company.com", name: "Продавец Confi" } });
+    const cookie = `confi_session=${(await seller.json()).sessionId}`;
+    const bad = await request.post("/api/uploads", { headers: { cookie }, data: { dataUrl: "data:text/plain;base64,aGVsbG8=" } });
+    expect(bad.status()).toBe(400);
+    expect((await bad.json()).error).toBe("invalid_file_type");
+
+    // A PNG MIME prefix with non-PNG bytes fails the magic-byte check.
+    const fake = await request.post("/api/uploads", { headers: { cookie }, data: { dataUrl: "data:image/png;base64,aGVsbG8=" } });
+    expect(fake.status()).toBe(400);
+    expect((await fake.json()).error).toBe("invalid_file");
+  });
+
+  test("admin uploads management: list, 409 in use, prune, 403 for seller", async ({ request }) => {
+    const seller = await request.post("/api/session", { data: { email: "user@company.com", name: "Продавец Confi" } });
+    const sellerCookie = `confi_session=${(await seller.json()).sessionId}`;
+    const admin = await request.post("/api/session", { data: { email: "avgordeev@alfabank.ru", name: "Администратор" } });
+    const adminCookie = `confi_session=${(await admin.json()).sessionId}`;
+
+    // Seller uploads two files: one referenced by a seeded part, one orphaned.
+    const used = await (await request.post("/api/uploads", {
+      headers: { cookie: sellerCookie },
+      data: { dataUrl: PNG_DATA_URL },
+    })).json();
+    const orphan = await (await request.post("/api/uploads", {
+      headers: { cookie: sellerCookie },
+      data: { dataUrl: PNG_DATA_URL },
+    })).json();
+
+    const partId = "cpu-r5-5600";
+    await request.patch(`/api/components/${partId}`, {
+      headers: { cookie: sellerCookie },
+      data: { image: used.url },
+    });
+
+    // Seller cannot access admin routes.
+    expect((await request.get("/api/admin/uploads", { headers: { cookie: sellerCookie } })).status()).toBe(403);
+    expect((await request.post("/api/admin/uploads/prune", { headers: { cookie: sellerCookie } })).status()).toBe(403);
+
+    const list = await request.get("/api/admin/uploads", { headers: { cookie: adminCookie } });
+    expect(list.ok()).toBeTruthy();
+    const entries = await list.json() as { file: string; url: string; used: boolean; partId?: string }[];
+    const usedEntry = entries.find((e) => e.url === used.url);
+    expect(usedEntry?.used).toBe(true);
+    expect(usedEntry?.partId).toBe(partId);
+
+    // Deleting a used file is rejected.
+    const usedName = used.url.split("/").pop();
+    expect((await request.delete(`/api/admin/uploads/${usedName}`, { headers: { cookie: adminCookie } })).status()).toBe(409);
+
+    // Deleting the orphan succeeds.
+    const orphanName = orphan.url.split("/").pop();
+    expect((await request.delete(`/api/admin/uploads/${orphanName}`, { headers: { cookie: adminCookie } })).status()).toBe(204);
+
+    // Detach, then prune removes the now-unreferenced file and reports a count.
+    await request.patch(`/api/components/${partId}`, { headers: { cookie: sellerCookie }, data: { image: "" } });
+    const pruned = await request.post("/api/admin/uploads/prune", { headers: { cookie: adminCookie } });
+    expect(pruned.ok()).toBeTruthy();
+    expect(typeof (await pruned.json()).deleted).toBe("number");
   });
 });

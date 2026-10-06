@@ -6,6 +6,7 @@ import {
   Breadcrumbs,
   Button,
   Card,
+  EmptyState,
   Field,
   Input,
   Modal,
@@ -22,11 +23,21 @@ import {
   TableRow,
   useToast,
 } from "../components/ui";
-import { createUser, deleteUser, fetchUsers, setUserRole } from "../lib/api";
+import {
+  createUser,
+  deleteUpload,
+  deleteUser,
+  fetchUploads,
+  fetchUsers,
+  pruneUploads,
+  setUserRole,
+  type UploadEntry,
+} from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { formatDate } from "../lib/format";
 import { useSort } from "../lib/useSort";
 import { SortableTh } from "../components/ui/SortableTh";
+import { PartImage } from "../components/shared/PartImage";
 import type { User, UserRole } from "../types";
 
 const ROLE_LABELS: Record<UserRole, string> = {
@@ -38,6 +49,13 @@ const ROLE_LABELS: Record<UserRole, string> = {
 function contactLabel(u: User): string {
   if (u.role === "customer") return [u.email, u.phone].filter(Boolean).join(" · ") || "—";
   return u.email ?? "—";
+}
+
+/** Human-readable file size (KB/MB). */
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} Б`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} КБ`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} МБ`;
 }
 
 interface CreateForm {
@@ -60,6 +78,10 @@ export default function Admin({ embedded = false }: { embedded?: boolean }) {
   const [showCreate, setShowCreate] = useState(false);
   const [form, setForm] = useState<CreateForm>(emptyForm);
   const [creating, setCreating] = useState(false);
+  const [uploads, setUploads] = useState<UploadEntry[]>([]);
+  const [uploadsLoading, setUploadsLoading] = useState(true);
+  const [pruneOpen, setPruneOpen] = useState(false);
+  const [pruneBusy, setPruneBusy] = useState(false);
   const { sort, toggle, sorted } = useSort();
 
   const sortedUsers = useMemo(
@@ -92,6 +114,21 @@ export default function Admin({ embedded = false }: { embedded?: boolean }) {
   useEffect(() => {
     load();
   }, [load]);
+
+  const loadUploads = useCallback(async () => {
+    setUploadsLoading(true);
+    try {
+      setUploads(await fetchUploads());
+    } catch {
+      toast("Не удалось загрузить фото", "error");
+    } finally {
+      setUploadsLoading(false);
+    }
+  }, [toast]);
+
+  useEffect(() => {
+    loadUploads();
+  }, [loadUploads]);
 
   if (!isAdmin) {
     return (
@@ -145,8 +182,9 @@ export default function Admin({ embedded = false }: { embedded?: boolean }) {
       await deleteUser(u.id);
       toast("Пользователь удалён", "info");
       await load();
-    } catch {
-      toast("Не удалось удалить пользователя", "error");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "";
+      toast(message || "Не удалось удалить пользователя", "error");
     }
   };
 
@@ -159,6 +197,36 @@ export default function Admin({ embedded = false }: { embedded?: boolean }) {
       if (u.id === user?.id) await refreshUser();
     } catch {
       toast("Не удалось изменить роль", "error");
+    }
+  };
+
+  const handleDeleteUpload = async (entry: UploadEntry) => {
+    try {
+      await deleteUpload(entry.file);
+      toast("Файл удалён", "info");
+      await loadUploads();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "";
+      toast(
+        message === "file_in_use"
+          ? "Файл используется компонентом"
+          : "Не удалось удалить файл",
+        "error",
+      );
+    }
+  };
+
+  const handlePrune = async () => {
+    setPruneBusy(true);
+    try {
+      const { deleted } = await pruneUploads();
+      toast(`Удалено файлов: ${deleted}`);
+      setPruneOpen(false);
+      await loadUploads();
+    } catch {
+      toast("Не удалось удалить неиспользуемые файлы", "error");
+    } finally {
+      setPruneBusy(false);
     }
   };
 
@@ -238,6 +306,82 @@ export default function Admin({ embedded = false }: { embedded?: boolean }) {
         )}
       </Card>
 
+      <section className="mt-8" aria-label="Загруженные фото">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-semibold">Загруженные фото</h2>
+            <p className="text-sm text-muted-foreground">
+              Фото компонентов. Неиспользуемые файлы можно удалить.
+            </p>
+          </div>
+          <div className="flex gap-2">
+            <Button variant="secondary" onClick={() => loadUploads()}>
+              Обновить
+            </Button>
+            <Button variant="destructive" onClick={() => setPruneOpen(true)}>
+              Удалить неиспользуемые
+            </Button>
+          </div>
+        </div>
+
+        {uploadsLoading ? (
+          <div className="p-6 text-sm text-muted-foreground">Загрузка фото…</div>
+        ) : uploads.length === 0 ? (
+          <EmptyState
+            title="Загруженных фото нет"
+            description="Фото появятся здесь после загрузки в карточке компонента."
+          />
+        ) : (
+          <Card className="overflow-hidden">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Фото</TableHead>
+                  <TableHead>Файл</TableHead>
+                  <TableHead>Размер</TableHead>
+                  <TableHead>Загружен</TableHead>
+                  <TableHead>Статус</TableHead>
+                  <TableHead className="text-right">Действия</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {uploads.map((u) => (
+                  <TableRow key={u.file}>
+                    <TableCell>
+                      <PartImage image={u.url} alt={u.partName ?? u.file} />
+                    </TableCell>
+                    <TableCell className="max-w-[220px] truncate font-medium">{u.file}</TableCell>
+                    <TableCell className="text-muted-foreground">{formatBytes(u.size)}</TableCell>
+                    <TableCell className="text-muted-foreground">{formatDate(u.modifiedAt)}</TableCell>
+                    <TableCell>
+                      {u.used ? (
+                        <Badge variant="success" title={u.partName}>
+                          Используется{u.partName ? `: ${u.partName}` : ""}
+                        </Badge>
+                      ) : (
+                        <Badge variant="neutral">Не используется</Badge>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-destructive"
+                        disabled={u.used}
+                        title={u.used ? "Файл используется компонентом" : undefined}
+                        onClick={() => handleDeleteUpload(u)}
+                      >
+                        Удалить
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </Card>
+        )}
+      </section>
+
       <Modal
         open={showCreate}
         onClose={() => setShowCreate(false)}
@@ -309,6 +453,27 @@ export default function Admin({ embedded = false }: { embedded?: boolean }) {
             </Field>
           ) : null}
         </div>
+      </Modal>
+
+      <Modal
+        open={pruneOpen}
+        onClose={() => setPruneOpen(false)}
+        title="Удалить неиспользуемые фото"
+        description="Все загруженные файлы, не привязанные ни к одному компоненту, будут удалены безвозвратно."
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setPruneOpen(false)} disabled={pruneBusy}>
+              Отмена
+            </Button>
+            <Button variant="destructive" loading={pruneBusy} onClick={handlePrune}>
+              Удалить
+            </Button>
+          </>
+        }
+      >
+        <p className="text-sm text-muted-foreground">
+          Используемые компонентами файлы не затрагиваются.
+        </p>
       </Modal>
     </div>
   );

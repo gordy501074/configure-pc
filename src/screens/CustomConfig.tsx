@@ -11,6 +11,7 @@ import {
   useToast,
 } from "../components/ui";
 import { ComponentPicker } from "../components/shared/ComponentPicker";
+import { PartImage } from "../components/shared/PartImage";
 import { SellerPicker } from "../components/shared/SellerPicker";
 import { ReviewDialog } from "../components/shared/ReviewDialog";
 import { InstallmentPlan } from "../components/shared/InstallmentPlan";
@@ -209,11 +210,14 @@ export default function CustomConfig() {
 
                 {part ? (
                   <div className="flex items-center justify-between gap-3">
-                    <div className="flex min-w-0 flex-col">
-                      <span className="truncate font-medium">{part.name}</span>
-                      <span className="text-sm text-muted-foreground">
-                        {formatWatts(part.tdp)}
-                      </span>
+                    <div className="flex min-w-0 items-center gap-3">
+                      <PartImage image={part.image} alt={part.name} />
+                      <div className="flex min-w-0 flex-col">
+                        <span className="truncate font-medium">{part.name}</span>
+                        <span className="text-sm text-muted-foreground">
+                          {formatWatts(part.tdp)}
+                        </span>
+                      </div>
                     </div>
                     <span className="whitespace-nowrap font-semibold">
                       {formatPrice(part.price ?? 0)}

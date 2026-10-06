@@ -5,6 +5,9 @@
 
 import express from "express";
 import cors from "cors";
+import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { basename, dirname, extname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { createCatalogRepository, type CreatePartInput } from "./repository/catalog.ts";
 import { createUserRepository } from "./repository/user-data.ts";
 import { createSellerRepository } from "./repository/seller.ts";
@@ -14,16 +17,32 @@ import { createAnalyticsRepository, type AnalyticsEvent } from "./repository/ana
 import { createSalesAnalyticsRepository, type SalesAnalyticsScope } from "./repository/analytics-sales.ts";
 import { createPriceListRepository } from "./repository/price-list.ts";
 import { openDb } from "./db.ts";
-import type { SaveConfigInput, SaveOrderInput, SaveReviewInput } from "./repository/user-data.ts";
+import type { SaveConfigInput, SaveOrderInput, SaveReviewInput, UserDependencies } from "./repository/user-data.ts";
+import { UserHasDependenciesError } from "./repository/user-data.ts";
 import type { CatalogRepository } from "./repository/catalog.ts";
 import type { ComponentCategory, OrderStatus, PartCompat, PartDto, SpecItem, Usage, UserRole } from "./repository/types.ts";
 import { isPartOrderable, deriveBuildSpecs } from "./repository/types.ts";
 import { SELLER_ORDER_TRANSITIONS } from "../lib/orderStatus.ts";
+import { IMAGE_MIME_EXT, MAX_IMAGE_BYTES } from "../lib/imageUpload.ts";
 import { components } from "../data/mock.ts";
 
 const app = express();
 app.use(cors());
+
+// Image uploads live in a repo-root `uploads/` dir (override for tests), served
+// read-only under /api/uploads/<file> so the Vite /api proxy covers it in dev.
+const serverRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
+const UPLOADS_DIR = process.env.UPLOADS_DIR ?? join(serverRoot, "uploads");
+mkdirSync(UPLOADS_DIR, { recursive: true });
+// Base64 of a 5 MB image is ~6.7 MB, so this route needs a larger body limit.
+// It is mounted before the global parser (which then skips the already-parsed
+// body), keeping the default 100kb limit on every other endpoint.
+app.use("/api/uploads", express.json({ limit: "8mb" }));
 app.use(express.json());
+app.use(
+  "/api/uploads",
+  express.static(UPLOADS_DIR, { fallthrough: true, maxAge: "1h" }),
+);
 
 const db = openDb();
 const catalog = createCatalogRepository(db);
@@ -122,6 +141,103 @@ function requireSellerOrAdmin(
   }
   return actor;
 }
+
+// ---- Uploads (component images) ----
+
+const UPLOAD_MIME_EXT = IMAGE_MIME_EXT;
+const UPLOAD_EXT_MIME: Record<string, string> = {
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  webp: "image/webp",
+  gif: "image/gif",
+};
+
+/** Verify magic bytes for an allowlisted raster format (SVG deliberately excluded). */
+function matchesMagic(buf: Buffer, ext: string): boolean {
+  if (buf.length < 12) return false;
+  switch (ext) {
+    case "png":
+      return (
+        buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47 &&
+        buf[4] === 0x0d && buf[5] === 0x0a && buf[6] === 0x1a && buf[7] === 0x0a
+      );
+    case "jpg":
+      return buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff;
+    case "gif":
+      return buf.toString("latin1", 0, 6) === "GIF87a" || buf.toString("latin1", 0, 6) === "GIF89a";
+    case "webp":
+      return (
+        buf.toString("latin1", 0, 4) === "RIFF" &&
+        buf.toString("latin1", 8, 12) === "WEBP"
+      );
+    default:
+      return false;
+  }
+}
+
+/** Decode a `data:image/...;base64,...` URL, validating MIME and magic bytes. */
+function decodeImageDataUrl(
+  dataUrl: string,
+): { buffer: Buffer; ext: string } | { error: string } {
+  const m = /^data:([a-zA-Z0-9.+-]+\/[a-zA-Z0-9.+-]+);base64,([\s\S]+)$/.exec(dataUrl);
+  if (!m) return { error: "invalid_file" };
+  const mime = m[1].toLowerCase();
+  const ext = UPLOAD_MIME_EXT[mime];
+  if (!ext) return { error: "invalid_file_type" };
+  let buffer: Buffer;
+  try {
+    buffer = Buffer.from(m[2], "base64");
+  } catch {
+    return { error: "invalid_file" };
+  }
+  if (buffer.length === 0) return { error: "invalid_file" };
+  if (buffer.length > MAX_IMAGE_BYTES) return { error: "file_too_large" };
+  if (!matchesMagic(buffer, ext)) return { error: "invalid_file" };
+  return { buffer, ext };
+}
+
+/** Resolve a client-supplied upload file name to a safe on-disk path, or null. */
+function safeUploadPath(file: string): { name: string; path: string } | null {
+  if (!file || file !== basename(file) || file.includes("..")) return null;
+  const ext = extname(file).slice(1).toLowerCase();
+  if (!UPLOAD_EXT_MIME[ext]) return null;
+  const full = join(UPLOADS_DIR, file);
+  if (dirname(full) !== UPLOADS_DIR) return null;
+  return { name: file, path: full };
+}
+
+/** Best-effort delete of an upload referenced by a stored `/api/uploads/<file>` URL. */
+function deleteUploadByUrl(url: string | null): void {
+  if (!url || !url.startsWith("/api/uploads/")) return;
+  const name = url.slice("/api/uploads/".length);
+  const safe = safeUploadPath(name);
+  if (!safe) return;
+  try {
+    if (existsSync(safe.path)) unlinkSync(safe.path);
+  } catch {
+    /* best-effort: ignore races/permission errors */
+  }
+}
+
+app.post("/api/uploads", (req, res) => {
+  if (!requireSellerOrAdmin(req, res)) return;
+  const body = (req.body ?? {}) as { dataUrl?: unknown };
+  if (typeof body.dataUrl !== "string") {
+    return res.status(400).json({ error: "invalid_file" });
+  }
+  const decoded = decodeImageDataUrl(body.dataUrl);
+  if ("error" in decoded) {
+    return res.status(400).json({ error: decoded.error });
+  }
+  const file = `upload-${Date.now()}-${Math.random().toString(36).slice(2, 10)}.${decoded.ext}`;
+  try {
+    writeFileSync(join(UPLOADS_DIR, file), decoded.buffer);
+  } catch {
+    return res.status(500).json({ error: "upload_failed" });
+  }
+  res.status(201).json({ url: `/api/uploads/${file}` });
+});
 
 // ---- Catalog ----
 app.get("/api/parts", (req, res) => {
@@ -386,10 +502,49 @@ app.post("/api/users", (req, res) => {
   res.json(user);
 });
 
+/** Build a human-readable Russian reason from non-zero dependency counts. */
+function describeDependencies(deps: UserDependencies): string {
+  const parts: string[] = [];
+  const add = (n: number, one: string, few: string, many: string) => {
+    if (n <= 0) return;
+    const mod10 = n % 10;
+    const mod100 = n % 100;
+    let word = many;
+    if (mod10 === 1 && mod100 !== 11) word = one;
+    else if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) word = few;
+    parts.push(`${n} ${word}`);
+  };
+  add(deps.orders, "заказ", "заказа", "заказов");
+  add(deps.configs + deps.sellerConfigs, "сборка", "сборки", "сборок");
+  add(deps.readyPcs, "готовая сборка", "готовые сборки", "готовых сборок");
+  add(deps.priceLists, "прайс-лист", "прайс-листа", "прайс-листов");
+  add(deps.brands, "бренд", "бренда", "брендов");
+  add(deps.orderLines, "позиция заказа", "позиции заказов", "позиций заказов");
+  return (
+    `Нельзя удалить пользователя: за ним закреплены ${parts.join(", ")}. ` +
+    `Сначала удалите или передайте связанные записи другому продавцу.`
+  );
+}
+
 app.delete("/api/users/:id", (req, res) => {
   if (!requireAdmin(req, res)) return;
-  const ok = userData.deleteUser(req.params.id);
-  if (!ok) return res.status(404).json({ error: "user not found" });
+  const user = userData.getUser(req.params.id);
+  if (!user) return res.status(404).json({ error: "user not found" });
+  try {
+    const ok = userData.deleteUser(req.params.id);
+    if (!ok) return res.status(404).json({ error: "user not found" });
+  } catch (err) {
+    if (err instanceof UserHasDependenciesError) {
+      return res.status(409).json({
+        error: "user_has_dependencies",
+        details: {
+          dependencies: err.dependencies,
+          message: describeDependencies(err.dependencies),
+        },
+      });
+    }
+    throw err;
+  }
   res.status(204).end();
 });
 
@@ -796,7 +951,7 @@ app.post("/api/components", (req, res) => {
     tdpWatt: Math.round(Number(body.tdp ?? 0)),
     compat,
     specs,
-    imageUrl: typeof body.image === "string" ? body.image : null,
+    imageUrl: typeof body.image === "string" && body.image.trim() ? body.image.trim() : null,
   });
   res.status(201).json(part);
 });
@@ -833,6 +988,12 @@ app.patch("/api/components/:id", (req, res) => {
   if (body.compat !== undefined) patch.compat = body.compat as PartCompat;
   if (body.specs !== undefined) patch.specs = body.specs as SpecItem[];
 
+  // Image: "" / null clears it; a non-empty string sets it. undefined = unchanged.
+  if (body.image !== undefined) {
+    patch.imageUrl =
+      typeof body.image === "string" && body.image.trim() ? body.image.trim() : null;
+  }
+
   // Recompute the full display name from vendor + brand when either changes.
   if (brand !== undefined || vendorId !== undefined) {
     const existing = catalog.getPartAny(req.params.id);
@@ -845,8 +1006,18 @@ app.patch("/api/components/:id", (req, res) => {
     patch.name = composePartName(nextVendorName, nextBrand);
   }
 
+  const previousImage =
+    patch.imageUrl !== undefined ? catalog.getPartAny(req.params.id)?.image ?? null : null;
   const updated = catalog.updatePart(req.params.id, patch);
   if (!updated) return res.status(404).json({ error: "part not found" });
+  // Best-effort: drop the replaced/cleared file so uploads don't accumulate, but
+  // only when no other part still references the same shared upload.
+  if (patch.imageUrl !== undefined && previousImage !== patch.imageUrl) {
+    const stillUsed = db
+      .prepare(`SELECT 1 FROM part WHERE image_url = ? AND part_id <> ? LIMIT 1`)
+      .get(previousImage, req.params.id);
+    if (!stillUsed) deleteUploadByUrl(previousImage);
+  }
   res.json(updated);
 });
 
@@ -888,6 +1059,106 @@ app.post("/api/catalog/initialize", (req, res) => {
   }
   const result = catalog.initializeCatalog(input);
   res.json({ ok: true, ...result });
+});
+
+// ---- Admin: uploaded component photos ----
+
+interface UploadEntry {
+  file: string;
+  url: string;
+  size: number;
+  modifiedAt: number;
+  used: boolean;
+  partId?: string;
+  partName?: string;
+}
+
+/** Map of `/api/uploads/<file>` URL -> first referencing part (id/name). */
+function uploadReferences(): Map<string, { partId: string; partName: string }> {
+  const rows = db
+    .prepare(
+      `SELECT part_id, name, image_url FROM part WHERE image_url LIKE '/api/uploads/%'`,
+    )
+    .all() as { part_id: string; name: string; image_url: string }[];
+  const map = new Map<string, { partId: string; partName: string }>();
+  for (const r of rows) {
+    if (!map.has(r.image_url)) map.set(r.image_url, { partId: r.part_id, partName: r.name });
+  }
+  return map;
+}
+
+/** List files currently present in UPLOADS_DIR with usage info. */
+function listUploads(): UploadEntry[] {
+  const refs = uploadReferences();
+  const entries: UploadEntry[] = [];
+  for (const file of readdirSync(UPLOADS_DIR)) {
+    const full = join(UPLOADS_DIR, file);
+    let stat;
+    try {
+      stat = statSync(full);
+    } catch {
+      continue;
+    }
+    if (!stat.isFile()) continue;
+    const url = `/api/uploads/${file}`;
+    const ref = refs.get(url);
+    entries.push({
+      file,
+      url,
+      size: stat.size,
+      modifiedAt: stat.mtimeMs,
+      used: !!ref,
+      partId: ref?.partId,
+      partName: ref?.partName,
+    });
+  }
+  return entries.sort((a, b) => b.modifiedAt - a.modifiedAt);
+}
+
+app.get("/api/admin/uploads", (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  res.json(listUploads());
+});
+
+app.delete("/api/admin/uploads/:file", (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  const safe = safeUploadPath(String(req.params.file));
+  if (!safe) return res.status(400).json({ error: "invalid_file" });
+  if (!existsSync(safe.path)) return res.status(404).json({ error: "file_not_found" });
+  const ref = uploadReferences().get(`/api/uploads/${safe.name}`);
+  if (ref) return res.status(409).json({ error: "file_in_use" });
+  try {
+    unlinkSync(safe.path);
+  } catch {
+    /* best-effort */
+  }
+  res.status(204).end();
+});
+
+app.post("/api/admin/uploads/prune", (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  const refs = new Set(uploadReferences().keys());
+  let deleted = 0;
+  let freedBytes = 0;
+  for (const file of readdirSync(UPLOADS_DIR)) {
+    const full = join(UPLOADS_DIR, file);
+    if (refs.has(`/api/uploads/${file}`)) continue;
+    let stat;
+    try {
+      stat = statSync(full);
+    } catch {
+      continue;
+    }
+    if (!stat.isFile()) continue;
+    try {
+      unlinkSync(full);
+      deleted += 1;
+      freedBytes += stat.size;
+    } catch {
+      /* best-effort: ignore races */
+    }
+  }
+  res.json({ deleted, freedBytes });
 });
 
 // ---- Configs ----

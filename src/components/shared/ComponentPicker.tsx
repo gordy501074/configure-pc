@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { Badge, Button, Modal, Skeleton } from "../ui";
+import { PartImage } from "./PartImage";
 import { fetchParts } from "../../lib/api";
 import { CATEGORY_LABELS, formatPrice, formatWatts } from "../../lib/format";
 import { checkPartCompatibility } from "../../lib/compatibility";
@@ -79,7 +80,8 @@ export function ComponentPicker({
                   aria-disabled={blocked ? "true" : undefined}
                   onClick={() => !blocked && onSelect(p)}
                 >
-                  <span className="flex min-w-0 flex-col">
+                  <span className="flex min-w-0 items-center gap-3">
+                    <PartImage image={p.image} alt={p.name} />
                     <span className="truncate font-medium">{p.name}</span>
                   </span>
                   <span className="flex shrink-0 flex-col items-end text-sm">

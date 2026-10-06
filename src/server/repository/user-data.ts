@@ -27,6 +27,18 @@ import type {
 } from "./types.ts";
 import { configToDto, orderToDto, partToDto, reviewToDto, userToDto } from "./types.ts";
 
+/** True when better-sqlite3 rejected a write due to a FOREIGN KEY constraint. */
+function isForeignKeyError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const code = (err as Error & { code?: unknown }).code;
+  if (typeof code === "string" && code.startsWith("SQLITE_CONSTRAINT")) {
+    // better-sqlite3 reports FK violations as SQLITE_CONSTRAINT_TRIGGER (FKs are
+    // enforced via internal triggers); other constraint codes also start here.
+    return code === "SQLITE_CONSTRAINT_TRIGGER" || code.startsWith("SQLITE_CONSTRAINT_FOREIGNKEY");
+  }
+  return /FOREIGN KEY constraint failed/i.test(err.message);
+}
+
 export interface SaveConfigInput {
   id: string;
   user_id: string;
@@ -70,6 +82,44 @@ export interface CreateUserInput {
   company?: string;
 }
 
+/**
+ * Non-zero counts of business objects attached to a user. Any positive count
+ * blocks deletion: the account is referenced by orders, configurations,
+ * ready PCs, price lists or brand ownership.
+ */
+export interface UserDependencies {
+  /** Orders placed by the user (order_header.user_id). */
+  orders: number;
+  /** Configurations owned by the user (config.user_id). */
+  configs: number;
+  /** Configurations attributed to the seller (config.seller_id). */
+  sellerConfigs: number;
+  /** Ready PCs owned by the seller (ready_pc.seller_id). */
+  readyPcs: number;
+  /** Price lists owned by the seller (price_list.seller_id). */
+  priceLists: number;
+  /** Brands owned by the seller (seller_brand.seller_id). */
+  brands: number;
+  /** Order lines attributed to the seller (order_item.seller_id). */
+  orderLines: number;
+}
+
+/** True when at least one dependency count is non-zero. */
+export function hasDependencies(deps: UserDependencies): boolean {
+  return Object.values(deps).some((n) => n > 0);
+}
+
+/** Raised when a user cannot be deleted because related records still reference it. */
+export class UserHasDependenciesError extends Error {
+  readonly dependencies: UserDependencies;
+
+  constructor(dependencies: UserDependencies) {
+    super("user_has_dependencies");
+    this.name = "UserHasDependenciesError";
+    this.dependencies = dependencies;
+  }
+}
+
 export interface UserDataRepository {
   // users / session
   getUser(id: string): UserDto | null;
@@ -83,6 +133,7 @@ export interface UserDataRepository {
   }): UserDto;
   listUsers(): UserDto[];
   createUser(input: CreateUserInput): UserDto;
+  /** Delete a user; throws `UserHasDependenciesError` when still referenced. */
   deleteUser(id: string): boolean;
   setUserRole(id: string, role: UserRole): UserDto | null;
   updateProfile(userId: string, patch: UpdateProfileInput): UserDto | null;
@@ -158,6 +209,16 @@ export function createUserRepository(db: Database): UserDataRepository {
     UPDATE user_account SET company=? WHERE user_id=?
   `);
   const deleteUserStmt = db.prepare(`DELETE FROM user_account WHERE user_id = ?`);
+  const userDepsStmt = db.prepare(`
+    SELECT
+      (SELECT COUNT(*) FROM order_header WHERE user_id = @id) AS orders,
+      (SELECT COUNT(*) FROM config WHERE user_id = @id) AS configs,
+      (SELECT COUNT(*) FROM config WHERE seller_id = @id) AS sellerConfigs,
+      (SELECT COUNT(*) FROM ready_pc WHERE seller_id = @id) AS readyPcs,
+      (SELECT COUNT(*) FROM price_list WHERE seller_id = @id) AS priceLists,
+      (SELECT COUNT(*) FROM seller_brand WHERE seller_id = @id) AS brands,
+      (SELECT COUNT(*) FROM order_item WHERE seller_id = @id) AS orderLines
+  `);
   const setUserRoleStmt = db.prepare(`
     UPDATE user_account SET role=?, phone=? WHERE user_id=?
   `);
@@ -505,7 +566,25 @@ export function createUserRepository(db: Database): UserDataRepository {
     },
 
     deleteUser(id) {
-      const info = deleteUserStmt.run(id);
+      // Guard BEFORE deleting: orders/configs/ready PCs/price lists/brands still
+      // referencing the user must block deletion. Checking up front (instead of
+      // relying on the FK error) gives a precise reason and also covers
+      // seller-side references that would otherwise be silently CASCADE-deleted
+      // (config.seller_id, ready_pc.seller_id, seller_brand, price_list).
+      const deps = userDepsStmt.get({ id }) as UserDependencies;
+      if (hasDependencies(deps)) throw new UserHasDependenciesError(deps);
+
+      let info: { changes: number };
+      try {
+        info = deleteUserStmt.run(id);
+      } catch (err) {
+        // Defensive: a reference we do not enumerate here still hit the FK
+        // RESTRICT. Report the generic dependency reason rather than a 500.
+        if (isForeignKeyError(err)) {
+          throw new UserHasDependenciesError(userDepsStmt.get({ id }) as UserDependencies);
+        }
+        throw err;
+      }
       return info.changes > 0;
     },
 

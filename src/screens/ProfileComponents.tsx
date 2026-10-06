@@ -44,7 +44,10 @@ import {
   initializeCatalog,
   reactivatePart,
   updatePart,
+  uploadPartImage,
 } from "../lib/api";
+import { PartImage } from "../components/shared/PartImage";
+import { ALLOWED_IMAGE_ACCEPT, ALLOWED_IMAGE_MIME_TYPES, MAX_IMAGE_BYTES } from "../lib/imageUpload";
 import type { ComponentCategory, Part, PartCompat, Vendor } from "../types";
 
 const CATEGORY_ORDER: ComponentCategory[] = [
@@ -145,6 +148,7 @@ interface FormState {
   sizeMm: string;
   benches: string;
   specs: string;
+  image: string;
 }
 
 const BLANK: FormState = {
@@ -165,6 +169,7 @@ const BLANK: FormState = {
   sizeMm: "",
   benches: "",
   specs: "",
+  image: "",
 };
 
 export function ProfileComponents({ isAdmin }: { isAdmin: boolean }) {
@@ -256,6 +261,7 @@ export function ProfileComponents({ isAdmin }: { isAdmin: boolean }) {
       sizeMm: c.sizeMm ? String(c.sizeMm) : "",
       benches: c.benches ? c.benches.map((b) => `${b.label}:${b.score}`).join(", ") : "",
       specs: p.specs.map((s) => `${s.label}:${s.value}`).join("\n"),
+      image: p.image ?? "",
     });
     setModalOpen(true);
   };
@@ -318,6 +324,8 @@ export function ProfileComponents({ isAdmin }: { isAdmin: boolean }) {
       tdp: Number(form.tdp || 0),
       compat: buildCompat(),
       specs: buildSpecs(),
+      // "" clears the image on PATCH (server maps it to null); unchanged otherwise.
+      image: form.image,
     };
     try {
       if (editId) {
@@ -331,6 +339,29 @@ export function ProfileComponents({ isAdmin }: { isAdmin: boolean }) {
       await reload();
     } catch {
       toast("Не удалось сохранить компонент", "error");
+    }
+  };
+
+  const handleImageFile = async (file: File) => {
+    if (!ALLOWED_IMAGE_MIME_TYPES.includes(file.type)) {
+      toast("Допустимы только PNG, JPEG, WebP и GIF", "error");
+      return;
+    }
+    if (file.size > MAX_IMAGE_BYTES) {
+      toast("Файл больше 5 МБ", "error");
+      return;
+    }
+    try {
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result));
+        reader.onerror = () => reject(new Error("read_failed"));
+        reader.readAsDataURL(file);
+      });
+      const url = await uploadPartImage(dataUrl);
+      set("image", url);
+    } catch {
+      toast("Не удалось загрузить фото", "error");
     }
   };
 
@@ -586,6 +617,8 @@ export function ProfileComponents({ isAdmin }: { isAdmin: boolean }) {
           form={form}
           set={set}
           vendorMatches={vendorMatches}
+          onImageFile={handleImageFile}
+          onImageClear={() => set("image", "")}
         />
       </Modal>
 
@@ -618,10 +651,14 @@ function ComponentForm({
   form,
   set,
   vendorMatches,
+  onImageFile,
+  onImageClear,
 }: {
   form: FormState;
   set: (k: keyof FormState, v: string) => void;
   vendorMatches: string[];
+  onImageFile: (file: File) => void;
+  onImageClear: () => void;
 }) {
   const compatFields = CATEGORY_FIELDS[form.category];
   return (
@@ -672,6 +709,29 @@ function ComponentForm({
           {[form.vendor.trim(), form.brand.trim()].filter(Boolean).join(" ") || "—"}
         </span>
       </div>
+
+      <Field label="Фото компонента" htmlFor="comp-image" hint="PNG, JPEG, WebP или GIF, до 5 МБ. Необязательно.">
+        <div className="flex items-center gap-3">
+          <PartImage image={form.image || undefined} alt="Предпросмотр фото компонента" />
+          <div className="flex flex-col gap-2">
+            <Input
+              id="comp-image"
+              type="file"
+              accept={ALLOWED_IMAGE_ACCEPT}
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) onImageFile(file);
+                e.target.value = "";
+              }}
+            />
+            {form.image ? (
+              <Button type="button" variant="ghost" size="sm" onClick={onImageClear}>
+                Удалить фото
+              </Button>
+            ) : null}
+          </div>
+        </div>
+      </Field>
 
       <Field label="TDP, Вт" htmlFor="comp-tdp" hint="Энергопотребление / мощность охлаждения — для CPU, GPU, RAM, storage и cooler.">
         <Input id="comp-tdp" type="number" min={0} value={form.tdp} onChange={(e) => set("tdp", e.target.value)} />

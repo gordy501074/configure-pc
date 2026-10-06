@@ -195,11 +195,17 @@ API через Vite-прокси `/api → http://localhost:8787`.
 - `POST /api/components/:id/deactivate` — мягкая деактивация (seller/admin): `is_available=0`, `is_active=0`
 - `POST /api/components/:id/reactivate` — повторная активация (seller/admin): `is_available=1`, `is_active=1`
 - `POST /api/catalog/initialize` — полная инициализация каталога эталоном из `mock.ts` (только `admin`)
+- Загрузка фото компонентов (seller/admin):
+  - `POST /api/uploads` — принять `{ dataUrl }` (data-URL PNG/JPEG/WebP/GIF, ≤5 МБ), сохранить файл в `uploads/` (или `UPLOADS_DIR`) и вернуть `{ url: "/api/uploads/<file>" }`; ошибки → `400 invalid_file_type | file_too_large | invalid_file`
+  - `GET /api/uploads/<file>` — статическая раздача загруженных файлов
+  - `GET /api/admin/uploads` — список загруженных фото с признаком `used` и ссылающимся компонентом (только `admin`)
+  - `DELETE /api/admin/uploads/:file` — удалить неиспользуемый файл (`409 file_in_use`, `404 file_not_found`; только `admin`)
+  - `POST /api/admin/uploads/prune` — удалить все неиспользуемые файлы, вернуть `{ deleted, freedBytes }` (только `admin`)
 - `GET/POST /api/onboarding` — онбординг
 - `POST /api/auth/request-code`, `POST /api/auth/verify` — мок-SMS
 - `POST /api/session`, `GET /api/session/:id`, `POST /api/session/logout` — сессия/пользователи
 - `PATCH /api/profile` — самообслуживание аккаунта (имя; продавец также может менять `company`) — только авторизованные
-- `GET /api/users`, `POST /api/users`, `DELETE /api/users/:id`, `PATCH /api/users/:id/role` — управление пользователями (только `admin`; дубль e-mail → `409`)
+- `GET /api/users`, `POST /api/users`, `DELETE /api/users/:id`, `PATCH /api/users/:id/role` — управление пользователями (только `admin`; дубль e-mail → `409`). Удаление пользователя, за которым закреплены заказы, сборки, готовые сборки, прайс-листы или бренды, отклоняется с `409` и телом `{ error: "user_has_dependencies", details: { dependencies, message } }` (например, заказчик с заказами или продавец с брендами/прайсами). Клиент показывает развёрнутую причину.
 - `GET/PUT/PATCH/DELETE /api/seller/:id/brands` — бренды продавца (владелец или `admin`): список, создание, обновление (переименование/описание), удаление; `GET` возвращает `{ brand, description }[]`
 - Прайс-листы продавца (владелец или `admin`):
   - `GET /api/seller/:id/price-lists` — список прайсов продавца (с позициями, названием и датой создания)
@@ -247,7 +253,8 @@ config, order, review, user, seller, vendor, app-state). Браузерная ч
 `PUT /api/reviews/:id` — только
 `customer` (`requireCustomer`, иначе `403`), бренды продавца — владелец или `admin`,
 `/api/vendors`, `/api/components*` и `/api/catalog/initialize` — `seller` или `admin`
-(`requireSellerOrAdmin`; инициализация — только `admin`).
+(`requireSellerOrAdmin`; инициализация — только `admin`). Загрузка фото (`POST /api/uploads`)
+доступна `seller`/`admin`, а просмотр/очистка загруженных файлов (`/api/admin/uploads*`) — только `admin`.
 `upsertUser` при входе по известному `email`/`phone`/`id` восстанавливает существующий
 аккаунт и его роль из БД (запрашиваемая роль игнорируется), поэтому вход админа/продавца
 по e-mail стабилен и не создаёт новый профиль.

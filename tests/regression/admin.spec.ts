@@ -62,6 +62,17 @@ test.describe("regression: admin", () => {
     await expect(page.getByText("Пользователь с таким e-mail уже существует")).toBeVisible();
   });
 
+  test("admin cannot delete a seller with attached data", async ({ page, request }) => {
+    await adminSession(page, request);
+    await page.goto("/admin");
+    const row = page.getByRole("row", { name: /Продавец Confi/ });
+    await expect(row).toBeVisible();
+    await row.getByRole("button", { name: "Удалить" }).click();
+    // The toast surfaces the detailed reason and the row stays.
+    await expect(page.getByText(/Нельзя удалить пользователя/)).toBeVisible();
+    await expect(page.getByRole("cell", { name: "Продавец Confi" })).toHaveCount(1);
+  });
+
   test("admin can delete a non-self user", async ({ page, request }) => {
     // Pre-create a disposable user via API.
     const sess = await request.post("/api/session", { data: { email: "avgordeev@alfabank.ru", name: "Администратор" } });

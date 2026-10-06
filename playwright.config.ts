@@ -10,6 +10,10 @@
  */
 import { defineConfig, devices } from "@playwright/test";
 import { API_PORT, APP_PORT, APP_BASE, TEST_DB_PATH } from "./tests/helpers/testDb.ts";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const testRoot = join(dirname(fileURLToPath(import.meta.url)), ".test-data", "uploads");
 
 export default defineConfig({
   testDir: "./tests",
@@ -42,7 +46,7 @@ export default defineConfig({
         `node --experimental-strip-types src/server/index.ts`,
       url: `http://localhost:${API_PORT}/api/health`,
       reuseExistingServer: !process.env.CI,
-      env: { ...process.env, DB_PATH: TEST_DB_PATH, PORT: String(API_PORT) } as Record<string, string>,
+      env: { ...process.env, DB_PATH: TEST_DB_PATH, PORT: String(API_PORT), UPLOADS_DIR: testRoot } as Record<string, string>,
       timeout: 30_000,
     },
     {

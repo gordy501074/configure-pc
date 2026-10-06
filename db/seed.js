@@ -188,6 +188,32 @@ const seedAll = db.transaction(() => {
   // upserted below; nothing in the catalog is deleted, so FK references from
   // user rows (ON DELETE RESTRICT / CASCADE) are never triggered.
 
+  // Accounts FIRST: catalog rows below carry FK references to `usr-seller`
+  // (ready_pc.seller_id, price_list.seller_id), so the account must exist
+  // before those inserts. Roles: admin & seller have NO phone (email-only
+  // login). Seller owns brand(s).
+  upsertAccount.run({
+    user_id: "usr-admin",
+    name: "Администратор",
+    email: "avgordeev@alfabank.ru",
+    phone: null,
+    role: "admin",
+    company: null,
+  });
+  upsertAccount.run({
+    user_id: "usr-seller",
+    name: "Продавец Confi",
+    email: "user@company.com",
+    phone: null,
+    role: "seller",
+    company: "ConfiГУРУ",
+  });
+  insertSellerBrand.run({
+    seller_id: "usr-seller",
+    brand: "Confi",
+    description: "Собственные сборки Confi",
+  });
+
   let partCount = 0;
   const partPrices = new Map();
   for (const cat of CATEGORIES) {
@@ -251,29 +277,6 @@ const seedAll = db.transaction(() => {
       created_at: new Date(r.createdAt).toISOString(),
     });
   }
-
-  // Roles: admin & seller have NO phone (email-only login). Seller owns brand(s).
-  upsertAccount.run({
-    user_id: "usr-admin",
-    name: "Администратор",
-    email: "avgordeev@alfabank.ru",
-    phone: null,
-    role: "admin",
-    company: null,
-  });
-  upsertAccount.run({
-    user_id: "usr-seller",
-    name: "Продавец Confi",
-    email: "user@company.com",
-    phone: null,
-    role: "seller",
-    company: "ConfiГУРУ",
-  });
-  insertSellerBrand.run({
-    seller_id: "usr-seller",
-    brand: "Confi",
-    description: "Собственные сборки Confi",
-  });
 
   // Remove vendors no longer referenced by any part (e.g. model names wrongly
   // created as vendors by earlier buggy seeds, or leftovers from deleted parts).
