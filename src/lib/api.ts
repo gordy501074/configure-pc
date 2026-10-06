@@ -65,11 +65,12 @@ export interface PartApi {
   tdp: number;
   specs: SpecItem[];
   image?: string;
+  description?: string;
   compat: PartCompat;
 }
 
 function mapPart(p: PartApi): Part {
-  const { id, category, name, brand, vendorId, available, price, priceSet, tdp, specs, image, compat } = p;
+  const { id, category, name, brand, vendorId, available, price, priceSet, tdp, specs, image, description, compat } = p;
   return {
     id,
     category,
@@ -82,6 +83,7 @@ function mapPart(p: PartApi): Part {
     tdp,
     specs,
     image,
+    description,
     compat,
   };
 }
@@ -709,6 +711,7 @@ export interface CreatePartInput {
   compat: PartCompat;
   specs: SpecItem[];
   image?: string;
+  description?: string;
 }
 
 export async function createPart(input: CreatePartInput): Promise<Part> {
@@ -725,6 +728,7 @@ export interface UpdatePartInput {
   compat?: PartCompat;
   specs?: SpecItem[];
   image?: string;
+  description?: string;
 }
 
 export async function updatePart(id: string, patch: UpdatePartInput): Promise<Part> {
@@ -787,4 +791,40 @@ export async function pruneUploads(): Promise<{ deleted: number; freedBytes: num
   return req<{ deleted: number; freedBytes: number }>("/admin/uploads/prune", {
     method: "POST",
   });
+}
+
+// ---- AI (OpenRouter): component description & photo search (seller/admin) ----
+
+export interface ComponentAiInput {
+  category?: string;
+  name?: string;
+  brand?: string;
+  specs?: string;
+}
+
+/**
+ * Ask the model to write a short RU description. Throws with the server error
+ * code (`ai_not_configured` / `ai_failed`) on failure.
+ */
+export async function generateComponentDescription(
+  input: ComponentAiInput,
+): Promise<string> {
+  const r = await req<{ description: string }>("/ai/component-description", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+  return r.description;
+}
+
+/**
+ * Ask the model to find a component photo (web search) and download it.
+ * Returns the served `/api/uploads/<file>` URL. Throws with the server error
+ * code on failure.
+ */
+export async function findComponentImage(input: ComponentAiInput): Promise<string> {
+  const r = await req<{ url: string }>("/ai/component-image", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+  return r.url;
 }

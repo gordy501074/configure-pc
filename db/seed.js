@@ -9,7 +9,7 @@ import { readFileSync, appendFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { components, readyPcs, seededReviews } from "../src/data/mock.ts";
-import { migratePriceLists, migrateSellerBrandDescription, migrateUserAccount, migrateVendorAndAvailability, migrateConfigReadyLink, migrateOrderAttributionAndCancel, migrateOrderRejectedStatus, migrateOrderPaymentMethod } from "./migrate.ts";
+import { migratePriceLists, migrateSellerBrandDescription, migrateUserAccount, migrateVendorAndAvailability, migrateConfigReadyLink, migrateOrderAttributionAndCancel, migrateOrderRejectedStatus, migrateOrderPaymentMethod, migratePartDescription } from "./migrate.ts";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const DB_PATH = join(root, "db", "confi.db");
@@ -59,6 +59,7 @@ migrateConfigReadyLink(db);
 migrateOrderAttributionAndCancel(db);
 migrateOrderRejectedStatus(db);
 migrateOrderPaymentMethod(db);
+migratePartDescription(db);
 
 /** Validate a single part row; returns null to skip. */
 function validatePart(p) {
@@ -108,8 +109,8 @@ const insertVendor = db.prepare(`
 `);
 
 const insertPart = db.prepare(`
-  INSERT INTO part (part_id, category, name, brand, vendor_id, tdp_watt, compat_json, specs_json, image_url, is_active, is_available)
-  VALUES (@part_id, @category, @name, @brand, @vendor_id, @tdp_watt, @compat_json, @specs_json, @image_url, 1, 1)
+  INSERT INTO part (part_id, category, name, brand, vendor_id, tdp_watt, compat_json, specs_json, image_url, description, is_active, is_available)
+  VALUES (@part_id, @category, @name, @brand, @vendor_id, @tdp_watt, @compat_json, @specs_json, @image_url, @description, 1, 1)
   ON CONFLICT(part_id) DO UPDATE SET
     category=excluded.category, name=excluded.name, brand=excluded.brand,
     vendor_id=excluded.vendor_id,
@@ -226,6 +227,7 @@ const seedAll = db.transaction(() => {
         compat_json: compatJson(p),
         specs_json: specsJson(p),
         image_url: p.image ?? null,
+        description: null,
       });
       partPrices.set(p.id, p.price);
       partCount += 1;

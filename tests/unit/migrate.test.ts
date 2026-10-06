@@ -5,7 +5,7 @@
 import { test } from "node:test";
 import assert from "node:assert";
 import Database from "better-sqlite3";
-import { migrateOrderAttributionAndCancel, migrateOrderRejectedStatus } from "../../db/migrate.ts";
+import { migrateOrderAttributionAndCancel, migrateOrderRejectedStatus, migratePartDescription } from "../../db/migrate.ts";
 
 /** Minimal pre-v9 schema: order_item lacks seller_id/category; status CHECK has no 'cancelled'. */
 function preV9Db(): Database.Database {
@@ -207,5 +207,31 @@ test("v10 migration is idempotent", () => {
   migrateOrderRejectedStatus(db);
   const second = db.prepare(`SELECT * FROM order_header ORDER BY order_id`).all();
   assert.deepEqual(second, first);
+  db.close();
+});
+
+test("v12 migration adds part.description and is idempotent", () => {
+  const db = new Database(":memory:");
+  db.exec(`CREATE TABLE part (part_id TEXT PRIMARY KEY, name TEXT NOT NULL) STRICT`);
+  db.prepare(`INSERT INTO part (part_id, name) VALUES ('p1','Тест')`).run();
+  assert.ok(!columns(db, "part").includes("description"));
+
+  migratePartDescription(db);
+  assert.ok(columns(db, "part").includes("description"));
+  const row = db.prepare(`SELECT name, description FROM part WHERE part_id='p1'`).get() as {
+    name: string;
+    description: string | null;
+  };
+  assert.equal(row.name, "Тест");
+  assert.equal(row.description, null);
+
+  // Rerunning is a no-op (column already present) and values survive.
+  db.prepare(`UPDATE part SET description='короткое' WHERE part_id='p1'`).run();
+  migratePartDescription(db);
+  assert.equal(
+    (db.prepare(`SELECT description FROM part WHERE part_id='p1'`).get() as { description: string })
+      .description,
+    "короткое",
+  );
   db.close();
 });

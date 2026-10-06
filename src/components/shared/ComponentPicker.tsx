@@ -82,7 +82,12 @@ export function ComponentPicker({
                 >
                   <span className="flex min-w-0 items-center gap-3">
                     <PartImage image={p.image} alt={p.name} />
-                    <span className="truncate font-medium">{p.name}</span>
+                    <span className="flex min-w-0 flex-col">
+                      <span className="truncate font-medium">{p.name}</span>
+                      {p.description ? (
+                        <span className="truncate text-sm text-muted-foreground">{p.description}</span>
+                      ) : null}
+                    </span>
                   </span>
                   <span className="flex shrink-0 flex-col items-end text-sm">
                     <span className="font-semibold">

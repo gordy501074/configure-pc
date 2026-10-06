@@ -69,6 +69,7 @@ export interface PartRow {
   compat_json: string;
   specs_json: string;
   image_url: string | null;
+  description: string | null;
   is_active: number;
   is_available: number;
   created_at: string;
@@ -88,6 +89,8 @@ export interface PartDto {
   tdp: number;
   specs: SpecItem[];
   image?: string;
+  /** Short RU card description (AI-generated or manual). */
+  description?: string;
   compat: PartCompat;
 }
 
@@ -297,6 +300,7 @@ export function partToDto(row: PartRow): PartDto {
     tdp: row.tdp_watt,
     specs: JSON.parse(row.specs_json || "[]"),
     image: row.image_url ?? undefined,
+    description: row.description ?? undefined,
     compat: decodeCompat(row.compat_json),
   };
 }

@@ -30,6 +30,7 @@
 - **Онбординг** — гейт при первом посещении с перенаправлением неприветствованных пользователей на `/onboarding`.
 - **Доступность** — WCAG 2.1 AA, обязательный `:focus`, `prefers-reduced-motion`, семантическая разметка, поддержка клавиатуры, корректный `sr-only`.
 - **Недоступность компонентов** — деактивированный (`is_active=0`/`is_available=0`) или полностью удалённый при переинициализации компонент в сохранённой конфигурации/готовом ПК отображается как «**Компонент более недоступен для заказа**» (вместо названия и цены). Такая сборка считается **неполной** для заказа/сохранения; сумма и TDP считаются только по доступным компонентам.
+- **AI-помощник компонента (OpenRouter)** — на вкладке «Компоненты» (`seller`/`admin`) в форме компонента доступны кнопки **«Описание (AI)»** (краткое RU-описание в новое поле `part.description`) и **«Найти фото (AI)»** (поиск фото в веб и скачивание в `uploads/` с записью в `part.image_url`). Вызовы синхронные (`/api/ai/component-description`, `/api/ai/component-image`); при отсутствии ключа — `503 ai_not_configured`, при ошибке провайдера — `502 ai_failed`. Ключ `OPENROUTER_API_KEY` живёт только на сервере и не попадает на фронтенд/в логи.
 - **Рейтинг без отзывов** — у новой/заведённой вручную сборки без отзывов (`reviewCount=0`) вместо звёзд и «5,0» выводится «**Пока нет отзывов**»; новой сборке при создании проставляется `rating=0`.
 
 ## Технологии
@@ -44,6 +45,7 @@
 - Утилиты стилей — **clsx** + **tailwind-merge** (`cn`)
 - Форматирование — нативный `Intl.NumberFormat` (рубли `ru-RU`), дни/даты на русском
 - **SQLite-бэкенд (основное хранилище)** — Express 5 + `better-sqlite3` (STRICT-таблицы, WAL, внешние ключи), типизированные DAO в `src/server/repository/`
+- **AI-слой сервера** — официальный `@openrouter/sdk` (гибрид: при заданном прокси — кастомный `HTTPClient`/`undici` `ProxyAgent`), `dotenv` для `.env`; SSRF-защита при скачивании картинок
 - Шрифты — **Inter** (основной) + **Manrope** (заголовки) через Google Fonts с `display=swap`
 - Путь-алиас `@/*` → `src/*`
 
@@ -116,6 +118,40 @@ src/
 > доступен только администратору (иначе редирект на `/`). Админ/продавец заходят только по e-mail
 > (у них нет телефона), клиент — по e-mail или SMS.
 
+## Переменные окружения и AI (OpenRouter)
+
+Скопируйте `.env.example` в `.env` (файл в `.gitignore`) и заполните значения:
+
+| Переменная | Назначение |
+| --- | --- |
+| `OPENROUTER_API_KEY` | API-ключ OpenRouter (обязателен для AI-функций). Получить: <https://openrouter.ai/keys> |
+| `OPENROUTER_MODEL` | Текстовая модель для описания (по умолчанию `deepseek/deepseek-v4.1-flash`) |
+| `OPENROUTER_IMAGE_MODEL` | Модель для поиска фото (по умолчанию `google/gemini-2.5-flash-lite`) |
+| `OPENROUTER_APP_URL` | Referer для атрибуции приложения (по умолчанию `http://localhost:5173`) |
+| `OPENROUTER_TITLE` | Название приложения в дашборде OpenRouter (по умолчанию `Confi`) |
+| `HTTPS_PROXY` / `HTTP_PROXY` | HTTP-прокси (опционально). Нужен там, где прямой доступ к `openrouter.ai` заблокирован (ответ `403`) |
+
+Сервер загружает `.env` через `dotenv/config` (`src/server/index.ts`). Без `OPENROUTER_API_KEY`
+AI-эндпоинты отвечают `503 ai_not_configured`, а кнопки в UI показывают понятную ошибку.
+
+### Выбор моделей
+
+Подобраны эмпирически (анализ каталога OpenRouter + прогоны на реальных компонентах):
+
+- **Описание** → `deepseek/deepseek-v4.1-flash`: корректный русский текст, ~1–2 с, десятки микроцентов за компонент.
+- **Поиск фото** → `google/gemini-2.5-flash-lite`: дешевле ($0.10/$0.40 за 1M токенов), быстрее (~4 с) и с наилучшим покрытием веб-поиска; при стратегии «страница → `og:image`» показала стабильные ~5/5 успешных загрузок против 0–1/5 у вариантов с прямыми ссылками. Модель получает 4–6 URL страниц товара, из каждой извлекается `og:image`.
+
+Модели можно переопределить через `OPENROUTER_MODEL` / `OPENROUTER_IMAGE_MODEL`.
+
+### Прокси
+
+Если прямой доступ к `openrouter.ai` заблокирован (datacenter IP → `403`), задайте
+`HTTPS_PROXY`/`HTTP_PROXY` (например, `http://127.0.0.1:12334`). В этом режиме SDK получает
+кастомный `HTTPClient` c `undici` `ProxyAgent`, который **реконструирует** запрос
+(`undici.fetch(url, { method, headers, body, dispatcher })`) — только эта стратегия
+работает в Node 24; пакет `undici` подключается лениво и нужен только при заданном прокси.
+Без прокси используется нативный `fetch`.
+
 ## SQLite-бэкенд (основное хранилище)
 
 Приложение полностью работает на **Node-бэкенде** на Express + `better-sqlite3`:
@@ -127,7 +163,7 @@ API через Vite-прокси `/api → http://localhost:8787`.
 
 | Команда | Действие |
 | --- | --- |
-| `npm run db:init` | Создать `db/confi.db` со схемой + миграцией (идемпотентно, `user_version=10`) |
+| `npm run db:init` | Создать `db/confi.db` со схемой + миграцией (идемпотентно, `user_version=12`) |
 | `npm run db:seed` | Seed каталога/готовых ПК/отзывов/ролей из `src/data/mock.ts` (пересоздаёт каталог) |
 | `npm run db:import <export.json>` | Импорт данных из устаревшего localStorage-экспорта `alfagen:` (батчинг, quarantine) |
 | `npm run db:backup` | Резервная копия `db/confi.db` в `db/backups/` |
@@ -140,7 +176,7 @@ API через Vite-прокси `/api → http://localhost:8787`.
 `src/data/mock.ts` напрямую (Node 24 native type-stripping), валидирует каждую
 запись и пишет битые строки в `db/quarantine-*.log`.
 
-**Миграция схемы:** `db/schema.sql` — источник DDL (`user_version=10`). В `db/migrate.ts`
+**Миграция схемы:** `db/schema.sql` — источник DDL (`user_version=12`). В `db/migrate.ts`
 — идемпотентные миграции:
 - `migrateUserAccount` — пересоздание `user_account` с новым CHECK роли
   (`'guest'` убрана, добавлены `seller`/`admin`) и колонкой `company`
@@ -175,6 +211,10 @@ API через Vite-прокси `/api → http://localhost:8787`.
   клиент может купить его за свой счёт). Пересоздаёт `order_header` по рецепту
   FK-off (`CREATE temp → INSERT → DROP → RENAME`) с `PRAGMA foreign_key_check`;
   идемпотентно (пропуск, если CHECK уже содержит `'alpha_rejected'`).
+- `migratePartDescription` (v12) — добавляет nullable-колонку **`description`**
+  в `part` (краткое RU-описание карточки, AI-генерация или ручной ввод) через
+  `ALTER TABLE part ADD COLUMN description TEXT`; идемпотентно (проверка
+  `PRAGMA table_info(part)`).
 
 Все миграции вызываются из `db:init`, `db:seed`, `src/server/db.ts` и тестовой инициализации.
 
@@ -190,8 +230,8 @@ API через Vite-прокси `/api → http://localhost:8787`.
   генерируются из состава)
 - `GET /api/sellers` — список продавцов (id, name, company) для селектора каталога
 - `GET /api/vendors` — список вендоров (торговых марок)
-- `POST /api/components` — создать компонент (роль `seller`/`admin`; `vendor` — название, upsert в `vendor`)
-- `PATCH /api/components/:id` — редактирование компонента (seller/admin)
+- `POST /api/components` — создать компонент (роль `seller`/`admin`; `vendor` — название, upsert в `vendor`; опционально `description`)
+- `PATCH /api/components/:id` — редактирование компонента (seller/admin; `description: ""`/`null` очищает)
 - `POST /api/components/:id/deactivate` — мягкая деактивация (seller/admin): `is_available=0`, `is_active=0`
 - `POST /api/components/:id/reactivate` — повторная активация (seller/admin): `is_available=1`, `is_active=1`
 - `POST /api/catalog/initialize` — полная инициализация каталога эталоном из `mock.ts` (только `admin`)
@@ -201,6 +241,10 @@ API через Vite-прокси `/api → http://localhost:8787`.
   - `GET /api/admin/uploads` — список загруженных фото с признаком `used` и ссылающимся компонентом (только `admin`)
   - `DELETE /api/admin/uploads/:file` — удалить неиспользуемый файл (`409 file_in_use`, `404 file_not_found`; только `admin`)
   - `POST /api/admin/uploads/prune` — удалить все неиспользуемые файлы, вернуть `{ deleted, freedBytes }` (только `admin`)
+- AI (OpenRouter), только `seller`/`admin`, синхронный JSON:
+  - `POST /api/ai/component-description` — тело `{ category, name, brand, specs }` → `{ description }` (1–2 предложения RU)
+  - `POST /api/ai/component-image` — тело то же → `{ url }` (скачанный файл в `uploads/`). Модель с веб-поиском возвращает **URL страниц товара** (надёжнее, чем прямые ссылки на картинки, которые модели часто выдумывают), сервер извлекает `og:image`/`twitter:image`, затем скачивает изображение. Каждый URL валидируется (https-only, блокировка private/loopback/link-local/metadata после DNS с привязкой к проверенному IP, ≤3 редиректа, таймаут, ≤5 МБ, проверка magic-bytes) и сохраняется первый валидный
+  - без ключа → `503 { error: "ai_not_configured" }`; ошибка OpenRouter → `502 { error: "ai_failed" }`; пустое тело → `400 { error: "invalid_input" }`
 - `GET/POST /api/onboarding` — онбординг
 - `POST /api/auth/request-code`, `POST /api/auth/verify` — мок-SMS
 - `POST /api/session`, `GET /api/session/:id`, `POST /api/session/logout` — сессия/пользователи
@@ -763,7 +807,7 @@ npm run preview
 | `npm run typecheck` | Проверка типов клиента и сервера |
 | `npm run server` | Запуск SQLite API-сервера (`http://localhost:8787`) |
 | `npm run server:dev` | Запуск SQLite API-сервера в watch-режиме |
-| `npm run db:init` | Создание схемы БД + миграция (`user_version=10`) |
+| `npm run db:init` | Создание схемы БД + миграция (`user_version=12`) |
 | `npm run db:seed` | Seed каталога/ролей из `mock.ts` |
 | `npm run db:import` | Импорт из localStorage-экспорта |
 | `npm run db:backup` | Бэкап `confi.db` |

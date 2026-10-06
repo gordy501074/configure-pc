@@ -55,6 +55,7 @@ interface PartRowLite {
   compat_json: string;
   specs_json: string;
   image_url: string | null;
+  description: string | null;
   is_active: number;
   is_available: number;
   created_at: string;

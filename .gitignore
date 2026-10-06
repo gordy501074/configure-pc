@@ -4,6 +4,9 @@ dist-node
 dist-ssr
 *.local
 *.log
+.env
+.env.*
+!.env.example
 .run/
 logs/
 .DS_Store
