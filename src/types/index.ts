@@ -68,6 +68,8 @@ export interface Part {
   /** In watts. */
   tdp: number;
   image?: string;
+  /** Short RU card description (AI-generated or manual). */
+  description?: string;
   /** Compat markers used by the compatibility engine. */
   compat: PartCompat;
 }

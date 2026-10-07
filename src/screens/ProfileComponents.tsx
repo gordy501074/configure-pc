@@ -41,6 +41,8 @@ import {
   deactivatePart,
   fetchParts,
   fetchVendors,
+  findComponentImage,
+  generateComponentDescription,
   initializeCatalog,
   reactivatePart,
   updatePart,
@@ -149,6 +151,7 @@ interface FormState {
   benches: string;
   specs: string;
   image: string;
+  description: string;
 }
 
 const BLANK: FormState = {
@@ -170,6 +173,7 @@ const BLANK: FormState = {
   benches: "",
   specs: "",
   image: "",
+  description: "",
 };
 
 export function ProfileComponents({ isAdmin }: { isAdmin: boolean }) {
@@ -184,6 +188,7 @@ export function ProfileComponents({ isAdmin }: { isAdmin: boolean }) {
   const [modalOpen, setModalOpen] = useState(false);
   const [initOpen, setInitOpen] = useState(false);
   const [initBusy, setInitBusy] = useState(false);
+  const [aiBusy, setAiBusy] = useState<null | "description" | "image">(null);
 
   const reload = useCallback(async () => {
     try {
@@ -262,6 +267,7 @@ export function ProfileComponents({ isAdmin }: { isAdmin: boolean }) {
       benches: c.benches ? c.benches.map((b) => `${b.label}:${b.score}`).join(", ") : "",
       specs: p.specs.map((s) => `${s.label}:${s.value}`).join("\n"),
       image: p.image ?? "",
+      description: p.description ?? "",
     });
     setModalOpen(true);
   };
@@ -326,6 +332,7 @@ export function ProfileComponents({ isAdmin }: { isAdmin: boolean }) {
       specs: buildSpecs(),
       // "" clears the image on PATCH (server maps it to null); unchanged otherwise.
       image: form.image,
+      description: form.description.trim(),
     };
     try {
       if (editId) {
@@ -339,6 +346,58 @@ export function ProfileComponents({ isAdmin }: { isAdmin: boolean }) {
       await reload();
     } catch {
       toast("Не удалось сохранить компонент", "error");
+    }
+  };
+
+  const aiInput = () => ({
+    category: form.category,
+    name: form.brand.trim(),
+    brand: form.vendor.trim(),
+    specs: form.specs.trim(),
+  });
+
+  const handleAiError = (err: unknown) => {
+    const message = err instanceof Error ? err.message : "";
+    if (message === "ai_not_configured") {
+      toast("AI не настроен: задайте OPENROUTER_API_KEY", "error");
+    } else if (message === "ai_failed") {
+      toast("AI не смог выполнить запрос", "error");
+    } else {
+      toast("Не удалось выполнить AI-запрос", "error");
+    }
+  };
+
+  const handleAiDescription = async () => {
+    if (!form.brand.trim() && !form.vendor.trim()) {
+      toast("Заполните модель или вендора", "error");
+      return;
+    }
+    setAiBusy("description");
+    try {
+      const text = await generateComponentDescription(aiInput());
+      set("description", text);
+      toast("Описание сгенерировано");
+    } catch (err) {
+      handleAiError(err);
+    } finally {
+      setAiBusy(null);
+    }
+  };
+
+  const handleAiImage = async () => {
+    if (!form.brand.trim() && !form.vendor.trim()) {
+      toast("Заполните модель или вендора", "error");
+      return;
+    }
+    setAiBusy("image");
+    try {
+      const url = await findComponentImage(aiInput());
+      set("image", url);
+      toast("Фото найдено");
+    } catch (err) {
+      handleAiError(err);
+    } finally {
+      setAiBusy(null);
     }
   };
 
@@ -619,6 +678,9 @@ export function ProfileComponents({ isAdmin }: { isAdmin: boolean }) {
           vendorMatches={vendorMatches}
           onImageFile={handleImageFile}
           onImageClear={() => set("image", "")}
+          onAiImage={handleAiImage}
+          onAiDescription={handleAiDescription}
+          aiBusy={aiBusy}
         />
       </Modal>
 
@@ -653,14 +715,21 @@ function ComponentForm({
   vendorMatches,
   onImageFile,
   onImageClear,
+  onAiImage,
+  onAiDescription,
+  aiBusy,
 }: {
   form: FormState;
   set: (k: keyof FormState, v: string) => void;
   vendorMatches: string[];
   onImageFile: (file: File) => void;
   onImageClear: () => void;
+  onAiImage: () => void;
+  onAiDescription: () => void;
+  aiBusy: null | "description" | "image";
 }) {
   const compatFields = CATEGORY_FIELDS[form.category];
+  const aiDisabled = !form.brand.trim() && !form.vendor.trim();
   return (
     <div className="flex flex-col gap-4">
       <div className="grid grid-cols-2 gap-3">
@@ -724,11 +793,50 @@ function ComponentForm({
                 e.target.value = "";
               }}
             />
-            {form.image ? (
-              <Button type="button" variant="ghost" size="sm" onClick={onImageClear}>
-                Удалить фото
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                disabled={aiDisabled || aiBusy !== null}
+                loading={aiBusy === "image"}
+                onClick={onAiImage}
+              >
+                Найти фото (AI)
               </Button>
-            ) : null}
+              {form.image ? (
+                <Button type="button" variant="ghost" size="sm" onClick={onImageClear}>
+                  Удалить фото
+                </Button>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      </Field>
+
+      <Field
+        label="Краткое описание (для карточки)"
+        htmlFor="comp-description"
+        hint="1–2 предложения. Можно сгенерировать кнопкой ниже."
+      >
+        <div className="flex flex-col gap-2">
+          <Textarea
+            id="comp-description"
+            value={form.description}
+            onChange={(e) => set("description", e.target.value)}
+            placeholder="Короткое описание компонента для карточки"
+          />
+          <div>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              disabled={aiDisabled || aiBusy !== null}
+              loading={aiBusy === "description"}
+              onClick={onAiDescription}
+            >
+              Описание (AI)
+            </Button>
           </div>
         </div>
       </Field>

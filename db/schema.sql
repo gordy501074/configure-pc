@@ -1,7 +1,7 @@
--- Confi SQLite schema (STRICT, WAL). Version 11.
+-- Confi SQLite schema (STRICT, WAL). Version 12.
 -- DDL per plan section 2. Applied idempotently by db:init / db:seed.
 
-PRAGMA user_version = 11;
+PRAGMA user_version = 12;
 PRAGMA journal_mode = WAL;
 
 -- Vendors (trademarks) referenced by parts. Populated on the fly from part.brand.
@@ -22,6 +22,8 @@ CREATE TABLE IF NOT EXISTS part (
   compat_json   TEXT NOT NULL,
   specs_json    TEXT NOT NULL DEFAULT '[]',
   image_url     TEXT,
+  -- Short RU card description (AI-generated or manual), nullable.
+  description   TEXT,
   is_active     INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0,1)),
   -- Available-for-order: is_active=0 (deactivated) OR is_available=0 means "недоступен".
   is_available  INTEGER NOT NULL DEFAULT 1 CHECK (is_available IN (0,1)),

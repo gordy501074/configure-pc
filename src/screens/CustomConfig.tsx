@@ -214,6 +214,11 @@ export default function CustomConfig() {
                       <PartImage image={part.image} alt={part.name} />
                       <div className="flex min-w-0 flex-col">
                         <span className="truncate font-medium">{part.name}</span>
+                        {part.description ? (
+                          <span className="truncate text-sm text-muted-foreground">
+                            {part.description}
+                          </span>
+                        ) : null}
                         <span className="text-sm text-muted-foreground">
                           {formatWatts(part.tdp)}
                         </span>

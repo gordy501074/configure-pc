@@ -832,3 +832,21 @@ export function migrateOrderPaymentMethod(db: Database.Database): void {
     db.pragma("foreign_keys = ON");
   }
 }
+
+/**
+ * True when `part` already has the `description` column.
+ * A missing table counts as "not migrated" (it will be created by schema.sql).
+ */
+function partHasDescription(db: Database.Database): boolean {
+  return tableColumns(db, "part").has("description");
+}
+
+/**
+ * Idempotent v12 migration: add the nullable `description` column to `part`
+ * (short RU card text, AI-generated or manual). Uses a plain `ALTER TABLE ADD
+ * COLUMN` (STRICT-compatible; nullable with no default), so reruns are a no-op.
+ */
+export function migratePartDescription(db: Database.Database): void {
+  if (partHasDescription(db)) return;
+  db.exec(`ALTER TABLE part ADD COLUMN description TEXT`);
+}

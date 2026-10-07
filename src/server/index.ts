@@ -3,6 +3,8 @@
 // This is the single server-side data store. The SPA client talks to these
 // endpoints (via the Vite /api proxy) for the catalog, user data and auth.
 
+// Load `.env` before any module reads `process.env` (must be the first import).
+import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
@@ -24,6 +26,9 @@ import type { ComponentCategory, OrderStatus, PartCompat, PartDto, SpecItem, Usa
 import { isPartOrderable, deriveBuildSpecs } from "./repository/types.ts";
 import { SELLER_ORDER_TRANSITIONS } from "../lib/orderStatus.ts";
 import { IMAGE_MIME_EXT, MAX_IMAGE_BYTES } from "../lib/imageUpload.ts";
+import { matchesMagic, UPLOAD_EXT_MIME } from "./image-magic.ts";
+import { AiNotConfiguredError, AiRequestError, isAiConfigured } from "./ai/openrouter.ts";
+import { describeComponent, findComponentImage } from "./ai/component-ai.ts";
 import { components } from "../data/mock.ts";
 
 const app = express();
@@ -145,36 +150,6 @@ function requireSellerOrAdmin(
 // ---- Uploads (component images) ----
 
 const UPLOAD_MIME_EXT = IMAGE_MIME_EXT;
-const UPLOAD_EXT_MIME: Record<string, string> = {
-  png: "image/png",
-  jpg: "image/jpeg",
-  jpeg: "image/jpeg",
-  webp: "image/webp",
-  gif: "image/gif",
-};
-
-/** Verify magic bytes for an allowlisted raster format (SVG deliberately excluded). */
-function matchesMagic(buf: Buffer, ext: string): boolean {
-  if (buf.length < 12) return false;
-  switch (ext) {
-    case "png":
-      return (
-        buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47 &&
-        buf[4] === 0x0d && buf[5] === 0x0a && buf[6] === 0x1a && buf[7] === 0x0a
-      );
-    case "jpg":
-      return buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff;
-    case "gif":
-      return buf.toString("latin1", 0, 6) === "GIF87a" || buf.toString("latin1", 0, 6) === "GIF89a";
-    case "webp":
-      return (
-        buf.toString("latin1", 0, 4) === "RIFF" &&
-        buf.toString("latin1", 8, 12) === "WEBP"
-      );
-    default:
-      return false;
-  }
-}
 
 /** Decode a `data:image/...;base64,...` URL, validating MIME and magic bytes. */
 function decodeImageDataUrl(
@@ -237,6 +212,63 @@ app.post("/api/uploads", (req, res) => {
     return res.status(500).json({ error: "upload_failed" });
   }
   res.status(201).json({ url: `/api/uploads/${file}` });
+});
+
+// ---- AI (OpenRouter): component description & photo search (seller/admin) ----
+
+/** Coerce an AI request body into a loosely-typed component descriptor. */
+function parseAiBody(body: unknown): {
+  category?: string;
+  name?: string;
+  brand?: string;
+  specs?: string;
+} {
+  const b = (body ?? {}) as Record<string, unknown>;
+  const str = (v: unknown): string | undefined =>
+    typeof v === "string" && v.trim() ? v.trim() : undefined;
+  return { category: str(b.category), name: str(b.name), brand: str(b.brand), specs: str(b.specs) };
+}
+
+/** Map an AI task failure to the agreed JSON error/status. */
+function sendAiError(res: express.Response, err: unknown): void {
+  if (err instanceof AiNotConfiguredError) {
+    return void res.status(503).json({ error: "ai_not_configured" });
+  }
+  if (err instanceof AiRequestError) {
+    return void res.status(502).json({ error: "ai_failed" });
+  }
+  return void res.status(502).json({ error: "ai_failed" });
+}
+
+app.post("/api/ai/component-description", async (req, res) => {
+  if (!requireSellerOrAdmin(req, res)) return;
+  const input = parseAiBody(req.body);
+  if (!input.name && !input.brand) {
+    return res.status(400).json({ error: "invalid_input" });
+  }
+  if (!isAiConfigured()) return res.status(503).json({ error: "ai_not_configured" });
+  try {
+    const description = await describeComponent(input);
+    res.json({ description });
+  } catch (err) {
+    sendAiError(res, err);
+  }
+});
+
+app.post("/api/ai/component-image", async (req, res) => {
+  if (!requireSellerOrAdmin(req, res)) return;
+  const input = parseAiBody(req.body);
+  if (!input.name && !input.brand) {
+    return res.status(400).json({ error: "invalid_input" });
+  }
+  if (!isAiConfigured()) return res.status(503).json({ error: "ai_not_configured" });
+  try {
+    const url = await findComponentImage(input, UPLOADS_DIR);
+    if (!url) return res.status(502).json({ error: "ai_failed" });
+    res.json({ url });
+  } catch (err) {
+    sendAiError(res, err);
+  }
 });
 
 // ---- Catalog ----
@@ -952,6 +984,10 @@ app.post("/api/components", (req, res) => {
     compat,
     specs,
     imageUrl: typeof body.image === "string" && body.image.trim() ? body.image.trim() : null,
+    description:
+      typeof body.description === "string" && body.description.trim()
+        ? body.description.trim()
+        : null,
   });
   res.status(201).json(part);
 });
@@ -974,6 +1010,7 @@ app.patch("/api/components/:id", (req, res) => {
     compat?: PartCompat;
     specs?: SpecItem[];
     imageUrl?: string | null;
+    description?: string | null;
   } = {};
   const brand = typeof body.brand === "string" ? body.brand.trim() : undefined;
   if (brand !== undefined) patch.brand = brand;
@@ -992,6 +1029,14 @@ app.patch("/api/components/:id", (req, res) => {
   if (body.image !== undefined) {
     patch.imageUrl =
       typeof body.image === "string" && body.image.trim() ? body.image.trim() : null;
+  }
+
+  // Description: "" / null clears it; a non-empty string sets it. undefined = unchanged.
+  if (body.description !== undefined) {
+    patch.description =
+      typeof body.description === "string" && body.description.trim()
+        ? body.description.trim()
+        : null;
   }
 
   // Recompute the full display name from vendor + brand when either changes.

@@ -6,7 +6,7 @@ import { mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { components, readyPcs } from "../../src/data/mock.ts";
-import { migratePriceLists, migrateSellerBrandDescription, migrateUserAccount, migrateVendorAndAvailability, migrateConfigReadyLink, migrateOrderAttributionAndCancel, migrateOrderRejectedStatus, migrateOrderPaymentMethod } from "../../db/migrate.ts";
+import { migratePriceLists, migrateSellerBrandDescription, migrateUserAccount, migrateVendorAndAvailability, migrateConfigReadyLink, migrateOrderAttributionAndCancel, migrateOrderRejectedStatus, migrateOrderPaymentMethod, migratePartDescription } from "../../db/migrate.ts";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -63,8 +63,8 @@ function seed(db: Database.Database): void {
     return vid;
   };
   const insertPart = db.prepare(`
-    INSERT INTO part (part_id, category, name, brand, vendor_id, tdp_watt, compat_json, specs_json, image_url, is_active, is_available)
-    VALUES (@part_id, @category, @name, @brand, @vendor_id, @tdp_watt, @compat_json, @specs_json, @image_url, 1, 1)
+    INSERT INTO part (part_id, category, name, brand, vendor_id, tdp_watt, compat_json, specs_json, image_url, description, is_active, is_available)
+    VALUES (@part_id, @category, @name, @brand, @vendor_id, @tdp_watt, @compat_json, @specs_json, @image_url, @description, 1, 1)
     ON CONFLICT(part_id) DO UPDATE SET
       category=excluded.category, name=excluded.name, brand=excluded.brand,
       vendor_id=excluded.vendor_id,
@@ -138,6 +138,7 @@ function seed(db: Database.Database): void {
           tdp_watt: Math.round(row.tdp),
           compat_json: compatJson(row), specs_json: specsJson(row as { specs?: unknown[] }),
           image_url: row.image ?? null,
+          description: null,
         });
         partPrices.set(row.id, row.price);
         n++;
@@ -206,6 +207,7 @@ export function initTestDb(dbPath = TEST_DB_PATH): string {
   migrateOrderAttributionAndCancel(db);
   migrateOrderRejectedStatus(db);
   migrateOrderPaymentMethod(db);
+  migratePartDescription(db);
   seed(db);
   db.close();
   return dbPath;

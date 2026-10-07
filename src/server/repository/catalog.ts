@@ -24,6 +24,7 @@ export interface CreatePartInput {
   compat: PartCompat;
   specs?: SpecItem[];
   imageUrl?: string | null;
+  description?: string | null;
 }
 
 export interface UpdatePartInput {
@@ -34,6 +35,7 @@ export interface UpdatePartInput {
   compat?: PartCompat;
   specs?: SpecItem[];
   imageUrl?: string | null;
+  description?: string | null;
 }
 
 export interface ReadyBuildPartRef {
@@ -323,13 +325,14 @@ export function createCatalogRepository(db: Database): CatalogRepository {
     },
     createPart(input) {
       db.prepare(
-        `INSERT INTO part (part_id, category, name, brand, vendor_id, tdp_watt, compat_json, specs_json, image_url, is_active, is_available)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1)
+        `INSERT INTO part (part_id, category, name, brand, vendor_id, tdp_watt, compat_json, specs_json, image_url, description, is_active, is_available)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1)
          ON CONFLICT(part_id) DO UPDATE SET
            category=excluded.category, name=excluded.name, brand=excluded.brand,
            vendor_id=excluded.vendor_id,
            tdp_watt=excluded.tdp_watt, compat_json=excluded.compat_json,
            specs_json=excluded.specs_json, image_url=excluded.image_url,
+           description=excluded.description,
            is_active=1, is_available=1`,
       ).run(
         input.id,
@@ -341,6 +344,7 @@ export function createCatalogRepository(db: Database): CatalogRepository {
         compatJson(input.compat),
         specsJson(input.specs),
         input.imageUrl ?? null,
+        input.description ?? null,
       );
       return partToDto(getPartAnyStmt.get(input.id) as PartRow);
     },
@@ -357,10 +361,12 @@ export function createCatalogRepository(db: Database): CatalogRepository {
         specs_json: patch.specs ? specsJson(patch.specs) : existing.specs_json,
         image_url:
           patch.imageUrl !== undefined ? patch.imageUrl : existing.image_url,
+        description:
+          patch.description !== undefined ? patch.description : existing.description,
       };
       db.prepare(
         `UPDATE part SET name=?, brand=?, vendor_id=?, tdp_watt=?,
-           compat_json=?, specs_json=?, image_url=?
+           compat_json=?, specs_json=?, image_url=?, description=?
          WHERE part_id=?`,
       ).run(
         next.name,
@@ -370,6 +376,7 @@ export function createCatalogRepository(db: Database): CatalogRepository {
         next.compat_json,
         next.specs_json,
         next.image_url,
+        next.description,
         id,
       );
       return partToDto(getPartAnyStmt.get(id) as PartRow);

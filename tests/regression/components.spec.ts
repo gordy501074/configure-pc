@@ -190,6 +190,89 @@ test.describe("regression: components & vendors", () => {
     expect((await fake.json()).error).toBe("invalid_file");
   });
 
+  test("customer cannot access AI endpoints (403)", async ({ request }) => {
+    const res = await request.post("/api/session", { data: { email: "customer@example.com", name: "Клиент" } });
+    const { sessionId } = await res.json();
+    const cookie = `confi_session=${sessionId}`;
+    for (const path of ["/api/ai/component-description", "/api/ai/component-image"]) {
+      const r = await request.post(path, { headers: { cookie }, data: { name: "Ryzen 5 5600", brand: "AMD" } });
+      expect(r.status()).toBe(403);
+    }
+  });
+
+  test("AI endpoints return 503 without an API key and validate the body", async ({ request }) => {
+    const seller = await request.post("/api/session", { data: { email: "user@company.com", name: "Продавец Confi" } });
+    const cookie = `confi_session=${(await seller.json()).sessionId}`;
+
+    // The test environment has no OPENROUTER_API_KEY.
+    const desc = await request.post("/api/ai/component-description", {
+      headers: { cookie },
+      data: { name: "Ryzen 5 5600", brand: "AMD" },
+    });
+    expect(desc.status()).toBe(503);
+    expect((await desc.json()).error).toBe("ai_not_configured");
+
+    const img = await request.post("/api/ai/component-image", {
+      headers: { cookie },
+      data: { name: "Ryzen 5 5600", brand: "AMD" },
+    });
+    expect(img.status()).toBe(503);
+    expect((await img.json()).error).toBe("ai_not_configured");
+
+    // Missing name/brand is rejected before the config check.
+    const bad = await request.post("/api/ai/component-description", {
+      headers: { cookie },
+      data: {},
+    });
+    expect(bad.status()).toBe(400);
+    expect((await bad.json()).error).toBe("invalid_input");
+  });
+
+  test("POST/PATCH components persists description", async ({ request }) => {
+    const seller = await request.post("/api/session", { data: { email: "user@company.com", name: "Продавец Confi" } });
+    const cookie = `confi_session=${(await seller.json()).sessionId}`;
+
+    // POST: outer whitespace is trimmed; the value is returned on the created part.
+    const created = await request.post("/api/components", {
+      headers: { cookie },
+      data: {
+        category: "cpu",
+        brand: "Desc CPU 7000",
+        vendor: "DescBrand",
+        price: 10000,
+        tdp: 65,
+        compat: { socket: "AM5" },
+        description: "  Краткое описание компонента  ",
+      },
+    });
+    expect(created.ok()).toBeTruthy();
+    const part = await created.json();
+    expect(part.description).toBe("Краткое описание компонента");
+
+    try {
+      const patched = await request.patch(`/api/components/${part.id}`, {
+        headers: { cookie },
+        data: { description: "Обновлённое описание" },
+      });
+      expect(patched.ok()).toBeTruthy();
+      expect((await patched.json()).description).toBe("Обновлённое описание");
+
+      // An empty string clears the description (null on the wire -> undefined in DTO).
+      const cleared = await request.patch(`/api/components/${part.id}`, {
+        headers: { cookie },
+        data: { description: "" },
+      });
+      expect(cleared.ok()).toBeTruthy();
+      expect((await cleared.json()).description).toBeUndefined();
+    } finally {
+      // Purge the throwaway part so it never affects catalog-count tests
+      // (the "add all" dialog includes inactive parts, so deactivation is not enough).
+      const admin = await request.post("/api/session", { data: { email: "avgordeev@alfabank.ru", name: "Администратор" } });
+      const adminCookie = `confi_session=${(await admin.json()).sessionId}`;
+      await request.post("/api/catalog/initialize", { headers: { cookie: adminCookie } });
+    }
+  });
+
   test("admin uploads management: list, 409 in use, prune, 403 for seller", async ({ request }) => {
     const seller = await request.post("/api/session", { data: { email: "user@company.com", name: "Продавец Confi" } });
     const sellerCookie = `confi_session=${(await seller.json()).sessionId}`;
