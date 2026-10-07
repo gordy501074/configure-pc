@@ -115,7 +115,10 @@ const insertPart = db.prepare(`
     category=excluded.category, name=excluded.name, brand=excluded.brand,
     vendor_id=excluded.vendor_id,
     tdp_watt=excluded.tdp_watt, compat_json=excluded.compat_json,
-    specs_json=excluded.specs_json, image_url=excluded.image_url, is_active=1, is_available=1
+    specs_json=excluded.specs_json,
+    image_url=COALESCE(excluded.image_url, part.image_url),
+    description=COALESCE(excluded.description, part.description),
+    is_active=1, is_available=1
 `);
 
 /** Ensure a vendor row exists for the brand, returning its real stored id. */
@@ -139,7 +142,7 @@ const insertReady = db.prepare(`
   ON CONFLICT(ready_pc_id) DO UPDATE SET
     brand=excluded.brand, usage=excluded.usage,
     specs_json=excluded.specs_json,
-    image_url=excluded.image_url, in_stock=excluded.in_stock,
+    image_url=COALESCE(excluded.image_url, ready_pc.image_url), in_stock=excluded.in_stock,
     seller_id=excluded.seller_id
 `);
 

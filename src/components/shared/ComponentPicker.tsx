@@ -81,7 +81,7 @@ export function ComponentPicker({
                   onClick={() => !blocked && onSelect(p)}
                 >
                   <span className="flex min-w-0 items-center gap-3">
-                    <PartImage image={p.image} alt={p.name} />
+                    <PartImage image={p.image} alt={p.name} zoomable={false} />
                     <span className="flex min-w-0 flex-col">
                       <span className="truncate font-medium">{p.name}</span>
                       {p.description ? (
