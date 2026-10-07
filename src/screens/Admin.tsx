@@ -27,6 +27,7 @@ import {
   createUser,
   deleteUpload,
   deleteUser,
+  fetchFakeDoorCtr,
   fetchUploads,
   fetchUsers,
   pruneUploads,
@@ -35,16 +36,24 @@ import {
 } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { formatDate } from "../lib/format";
+import { cn } from "../lib/utils";
 import { useSort } from "../lib/useSort";
 import { SortableTh } from "../components/ui/SortableTh";
 import { PartImage } from "../components/shared/PartImage";
-import type { User, UserRole } from "../types";
+import type { AnalyticsPeriod, FakeDoorCtrRow, User, UserRole } from "../types";
 
 const ROLE_LABELS: Record<UserRole, string> = {
   customer: "Клиент",
   seller: "Продавец",
   admin: "Администратор",
 };
+
+const CTR_PERIODS: { key: AnalyticsPeriod; label: string }[] = [
+  { key: "7d", label: "7 дней" },
+  { key: "30d", label: "30 дней" },
+  { key: "90d", label: "90 дней" },
+  { key: "all", label: "Весь период" },
+];
 
 function contactLabel(u: User): string {
   if (u.role === "customer") return [u.email, u.phone].filter(Boolean).join(" · ") || "—";
@@ -83,6 +92,12 @@ export default function Admin({ embedded = false }: { embedded?: boolean }) {
   const [pruneOpen, setPruneOpen] = useState(false);
   const [pruneBusy, setPruneBusy] = useState(false);
   const { sort, toggle, sorted } = useSort();
+
+  const [ctrPeriod, setCtrPeriod] = useState<AnalyticsPeriod>("30d");
+  const [ctrRows, setCtrRows] = useState<FakeDoorCtrRow[]>([]);
+  const [ctrLoading, setCtrLoading] = useState(true);
+  const [ctrError, setCtrError] = useState(false);
+  const ctrSort = useSort();
 
   const sortedUsers = useMemo(
     () =>
@@ -129,6 +144,38 @@ export default function Admin({ embedded = false }: { embedded?: boolean }) {
   useEffect(() => {
     loadUploads();
   }, [loadUploads]);
+
+  const loadCtr = useCallback(async () => {
+    setCtrLoading(true);
+    setCtrError(false);
+    try {
+      setCtrRows(await fetchFakeDoorCtr(ctrPeriod));
+    } catch {
+      setCtrError(true);
+      setCtrRows([]);
+    } finally {
+      setCtrLoading(false);
+    }
+  }, [ctrPeriod]);
+
+  useEffect(() => {
+    void loadCtr();
+  }, [loadCtr]);
+
+  const sortedCtr = useMemo(
+    () =>
+      ctrSort.sorted(ctrRows, (r: FakeDoorCtrRow) => {
+        switch (ctrSort.sort?.key) {
+          case "views": return r.views;
+          case "clicks": return r.clicks;
+          case "impressions": return r.impressions;
+          case "ctr": return r.ctr ?? -1;
+          default: return r.label;
+        }
+      }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [ctrRows, ctrSort.sort],
+  );
 
   if (!isAdmin) {
     return (
@@ -305,6 +352,77 @@ export default function Admin({ embedded = false }: { embedded?: boolean }) {
         </Table>
         )}
       </Card>
+
+      <section className="mt-8" aria-label="CTR по fake door">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-semibold">CTR по fake door</h2>
+            <p className="text-sm text-muted-foreground">
+              Просмотры экрана-носителя, клики по заглушкам и показы схем рассрочки (A/B).
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex gap-1 rounded-lg bg-muted p-1" role="tablist" aria-label="Период CTR">
+              {CTR_PERIODS.map((p) => (
+                <button
+                  key={p.key}
+                  type="button"
+                  role="tab"
+                  aria-selected={ctrPeriod === p.key}
+                  className={cn(
+                    "rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+                    ctrPeriod === p.key
+                      ? "bg-background text-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground",
+                  )}
+                  onClick={() => setCtrPeriod(p.key)}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
+            <Button variant="secondary" onClick={() => loadCtr()}>
+              Обновить
+            </Button>
+          </div>
+        </div>
+
+        {ctrLoading ? (
+          <div className="p-6 text-sm text-muted-foreground">Загрузка CTR…</div>
+        ) : ctrError || ctrRows.length === 0 ? (
+          <EmptyState
+            title="Нет данных о fake door"
+            description="CTR появится здесь после кликов и просмотров на экранах-носителях."
+          />
+        ) : (
+          <Card className="overflow-hidden">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <SortableTh label="Fake door" column="label" sort={ctrSort.sort} onSort={ctrSort.toggle} />
+                  <SortableTh label="Просмотры" column="views" sort={ctrSort.sort} onSort={ctrSort.toggle} align="right" />
+                  <SortableTh label="Клики" column="clicks" sort={ctrSort.sort} onSort={ctrSort.toggle} align="right" />
+                  <SortableTh label="CTR%" column="ctr" sort={ctrSort.sort} onSort={ctrSort.toggle} align="right" />
+                  <SortableTh label="Показы (A/B)" column="impressions" sort={ctrSort.sort} onSort={ctrSort.toggle} align="right" />
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {sortedCtr.map((r) => (
+                  <TableRow key={r.id}>
+                    <TableCell className="font-medium">{r.label}</TableCell>
+                    <TableCell className="text-right tabular-nums">{r.views}</TableCell>
+                    <TableCell className="text-right tabular-nums">{r.clicks}</TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {r.ctr === null || r.views === 0 ? "—" : `${Math.round(r.ctr * 100)}%`}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">{r.impressions}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </Card>
+        )}
+      </section>
 
       <section className="mt-8" aria-label="Загруженные фото">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">

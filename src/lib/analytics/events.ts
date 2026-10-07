@@ -13,6 +13,7 @@ export type AnalyticsEventName =
   | "ui:click"
   | "ui:submit"
   | "ui:error-boundary"
+  | "fake-door:impression"
   | "fetch:call"
   | "fetch:error"
   | "fetch:fail"

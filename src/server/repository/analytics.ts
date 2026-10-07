@@ -25,6 +25,12 @@ export interface AnalyticsRepository {
   recent(limit: number): AnalyticsEvent[];
   /** Latest events that map to the most frequent user flows (for test gen). */
   flows(limit: number, minCount?: number): { event: string; count: number }[];
+  /** Click counts per fake-door name (`ui:click` with payload.name LIKE fake_door%). */
+  fakeDoorClicks(from: string | null, to: string): { name: string; clicks: number }[];
+  /** `page:view` counts per route, restricted to the given host routes. */
+  routeViews(routes: string[], from: string | null, to: string): { route: string; views: number }[];
+  /** Impression counts per fake-door name (`fake-door:impression`). */
+  impressions(names: string[], from: string | null, to: string): { name: string; impressions: number }[];
 }
 
 export function createAnalyticsRepository(db: Database): AnalyticsRepository {
@@ -43,6 +49,33 @@ export function createAnalyticsRepository(db: Database): AnalyticsRepository {
     `SELECT event, COUNT(*) AS count FROM analytics_events
      WHERE level != 'debug'
      GROUP BY event ORDER BY count DESC LIMIT ?`,
+  );
+
+  const fakeDoorClicksStmt = db.prepare(
+    `SELECT json_extract(payload,'$.name') AS name, COUNT(*) AS clicks
+     FROM analytics_events
+     WHERE event = 'ui:click' AND json_valid(payload)
+       AND json_extract(payload,'$.name') LIKE 'fake_door%'
+       AND (@from IS NULL OR ts >= @from) AND ts <= @to
+     GROUP BY name`,
+  );
+
+  const impressionsStmt = db.prepare(
+    `SELECT json_extract(payload,'$.name') AS name, COUNT(*) AS impressions
+     FROM analytics_events
+     WHERE event = 'fake-door:impression' AND json_valid(payload)
+       AND json_extract(payload,'$.name') IN (SELECT value FROM json_each(@names))
+       AND (@from IS NULL OR ts >= @from) AND ts <= @to
+     GROUP BY name`,
+  );
+
+  const routeViewsStmt = db.prepare(
+    `SELECT route, COUNT(*) AS views
+     FROM analytics_events
+     WHERE event = 'page:view' AND route IS NOT NULL
+       AND route IN (SELECT value FROM json_each(@routes))
+       AND (@from IS NULL OR ts >= @from) AND ts <= @to
+     GROUP BY route`,
   );
 
   const insertMany = db.transaction((rows: AnalyticsEvent[]) => {
@@ -77,6 +110,23 @@ export function createAnalyticsRepository(db: Database): AnalyticsRepository {
     flows(limit, minCount = 3) {
       const rows = flowsStmt.all(limit) as { event: string; count: number }[];
       return rows.filter((r) => r.count >= minCount);
+    },
+    fakeDoorClicks(from, to) {
+      return fakeDoorClicksStmt.all({ from, to }) as { name: string; clicks: number }[];
+    },
+    routeViews(routes, from, to) {
+      if (routes.length === 0) return [];
+      return routeViewsStmt.all({ routes: JSON.stringify(routes), from, to }) as {
+        route: string;
+        views: number;
+      }[];
+    },
+    impressions(names, from, to) {
+      if (names.length === 0) return [];
+      return impressionsStmt.all({ names: JSON.stringify(names), from, to }) as {
+        name: string;
+        impressions: number;
+      }[];
     },
   };
 }

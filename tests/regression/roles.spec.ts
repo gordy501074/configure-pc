@@ -76,13 +76,16 @@ test.describe("regression: role restrictions", () => {
     expect(review.status()).toBe(403);
   });
 
-  test("admin profile has 'Администрирование пользователей' tab", async ({ page, request }) => {
+  test("admin profile has 'Администрирование' tab", async ({ page, request }) => {
     await loginByEmail(page, request, "avgordeev@alfabank.ru", "Администратор");
     await page.goto("/profile");
-    await expect(page.getByRole("link", { name: "Администрирование пользователей" })).toBeVisible();
-    await page.getByRole("link", { name: "Администрирование пользователей" }).click();
+    const profileNav = page.getByRole("navigation", { name: "Разделы профиля" });
+    await expect(profileNav.getByRole("link", { name: "Администрирование" })).toBeVisible();
+    await profileNav.getByRole("link", { name: "Администрирование" }).click();
     await expect(page).toHaveURL(/\/profile\/admin-users/);
-    await expect(page.getByRole("heading", { name: "Администрирование" })).toBeVisible();
+    // The screen heading and the CTR block are visible (avoid an ambiguous
+    // getByRole that matches both the tab link and the heading).
+    await expect(page.getByRole("heading", { name: "CTR по fake door" })).toBeVisible();
   });
 
   test("seller profile has 'Бренды' tab and shows Confi with description", async ({ page, request }) => {

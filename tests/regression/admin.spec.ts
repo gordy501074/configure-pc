@@ -40,6 +40,19 @@ test.describe("regression: admin", () => {
     await expect(row).toBeVisible();
   });
 
+  test("admin sees the fake-door CTR block", async ({ page, request }) => {
+    await adminSession(page, request);
+    await page.goto("/admin");
+    await expect(page.getByRole("heading", { name: "CTR по fake door" })).toBeVisible();
+    // The profile tab is renamed to «Администрирование» (no longer «…пользователей»).
+    await page.goto("/profile");
+    const profileNav = page.getByRole("navigation", { name: "Разделы профиля" });
+    await expect(profileNav.getByRole("link", { name: "Администрирование" })).toBeVisible();
+    await expect(
+      profileNav.getByRole("link", { name: "Администрирование пользователей" }),
+    ).toHaveCount(0);
+  });
+
   test("admin creates a user that appears in the table", async ({ page, request }) => {
     await adminSession(page, request);
     await page.goto("/admin");

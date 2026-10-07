@@ -18,6 +18,7 @@ import { createAppStateRepository } from "./repository/app-state.ts";
 import { createAnalyticsRepository, type AnalyticsEvent } from "./repository/analytics.ts";
 import { createSalesAnalyticsRepository, type SalesAnalyticsScope } from "./repository/analytics-sales.ts";
 import { createPriceListRepository } from "./repository/price-list.ts";
+import { FAKE_DOORS } from "../lib/analytics/fakeDoors.ts";
 import { openDb } from "./db.ts";
 import type { SaveConfigInput, SaveOrderInput, SaveReviewInput, UserDependencies } from "./repository/user-data.ts";
 import { UserHasDependenciesError } from "./repository/user-data.ts";
@@ -1561,6 +1562,40 @@ app.get("/api/admin/analytics", (req, res) => {
   if (!requireAdmin(req, res)) return;
   const preset = parsePeriod(req.query.period);
   res.json(buildSalesAnalyticsDto(preset, null, true));
+});
+
+app.get("/api/admin/fake-door-ctr", (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  const preset = parsePeriod(req.query.period);
+  const range = periodRange(preset);
+
+  const clicksByName = new Map(
+    analytics.fakeDoorClicks(range.from, range.to).map((r) => [r.name, r.clicks]),
+  );
+  const hostRoutes = Array.from(new Set(FAKE_DOORS.map((d) => d.hostRoute)));
+  const viewsByRoute = new Map(
+    analytics.routeViews(hostRoutes, range.from, range.to).map((r) => [r.route, r.views]),
+  );
+  const impressionsByName = new Map(
+    analytics
+      .impressions(FAKE_DOORS.map((d) => d.id), range.from, range.to)
+      .map((r) => [r.name, r.impressions]),
+  );
+
+  const rows = FAKE_DOORS.map((door) => {
+    const views = viewsByRoute.get(door.hostRoute) ?? 0;
+    const clicks = clicksByName.get(door.id) ?? 0;
+    return {
+      id: door.id,
+      label: door.label,
+      views,
+      clicks,
+      impressions: impressionsByName.get(door.id) ?? 0,
+      ctr: views > 0 ? clicks / views : null,
+    };
+  });
+
+  res.json(rows);
 });
 
 // ---- Reviews ----

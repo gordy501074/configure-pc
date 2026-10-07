@@ -20,6 +20,7 @@ import type {
   SpecItem,
   User,
   Vendor,
+  FakeDoorCtrRow,
 } from "../types";
 
 const BASE = "/api";
@@ -599,6 +600,12 @@ export async function fetchAdminSalesAnalytics(
   period: AnalyticsPeriod,
 ): Promise<SalesAnalytics> {
   return req<SalesAnalytics>(`/admin/analytics?period=${encodeURIComponent(period)}`);
+}
+
+// ---- CTR (fake doors) ----
+
+export async function fetchFakeDoorCtr(period: AnalyticsPeriod): Promise<FakeDoorCtrRow[]> {
+  return req<FakeDoorCtrRow[]>(`/admin/fake-door-ctr?period=${encodeURIComponent(period)}`);
 }
 
 // ---- Price lists (seller/admin) ----

@@ -308,3 +308,15 @@ export interface SalesAnalytics {
   /** Only returned by the admin aggregate endpoint. */
   installment?: InstallmentAnalytics;
 }
+
+// ---- CTR (fake doors) ----
+
+/** One row of the admin "CTR по fake door" table. */
+export interface FakeDoorCtrRow {
+  id: string;
+  label: string;
+  views: number;
+  clicks: number;
+  impressions: number;
+  ctr: number | null;
+}

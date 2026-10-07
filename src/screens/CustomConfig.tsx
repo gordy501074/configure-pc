@@ -15,6 +15,7 @@ import { PartImage } from "../components/shared/PartImage";
 import { SellerPicker } from "../components/shared/SellerPicker";
 import { ReviewDialog } from "../components/shared/ReviewDialog";
 import { InstallmentPlan } from "../components/shared/InstallmentPlan";
+import { InstallmentFakeDoor } from "../components/shared/InstallmentFakeDoor";
 import { CATEGORY_LABELS, formatPrice, formatWatts } from "../lib/format";
 import { configStats, validateConfig, isConfigComplete } from "../lib/compatibility";
 import { saveConfigAction, shareAction } from "../lib/actions";
@@ -299,6 +300,8 @@ export default function CustomConfig() {
                 }}
               />
             ) : null}
+
+            {isCustomer ? <InstallmentFakeDoor total={stats.totalPrice} /> : null}
 
             {isCustomer ? (
               <>

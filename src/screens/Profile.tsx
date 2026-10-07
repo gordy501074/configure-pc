@@ -16,9 +16,11 @@ import {
   useToast,
 } from "../components/ui";
 import { ConfigPartsTable } from "../components/shared/ConfigPartsTable";
+import { ComingSoonDialog } from "../components/shared/ComingSoonDialog";
 import { cn } from "../lib/utils";
 import { configStats, isPriceStale } from "../lib/compatibility";
 import { formatAgo, formatDate, formatPrice } from "../lib/format";
+import { MAX_COMPARE, useCompare } from "../lib/useCompare";
 import {
   addSellerBrand,
   buyOwnOrder,
@@ -52,7 +54,7 @@ interface TabDef {
 function tabsForRole(role: string): TabDef[] {
   if (role === "admin") {
     return [
-      { key: "admin-users", label: "Администрирование пользователей" },
+      { key: "admin-users", label: "Администрирование" },
       { key: "components", label: "Компоненты" },
       { key: "price-lists", label: "Прайс-листы" },
       { key: "ready-builds", label: "Готовые конфигурации" },
@@ -103,6 +105,9 @@ export default function Profile() {
   const [brandEditIndex, setBrandEditIndex] = useState<number | null>(null);
   const [brandName, setBrandName] = useState("");
   const [brandDescription, setBrandDescription] = useState("");
+
+  const compare = useCompare(configs.map((c) => c.id));
+  const [compareOpen, setCompareOpen] = useState(false);
 
   const tabs: TabDef[] = tabsForRole(user?.role ?? "customer");
   const activeTab: Tab = tabs.some((t) => t.key === tab) ? (tab as Tab) : tabs[0]?.key ?? "configs";
@@ -364,8 +369,33 @@ export default function Profile() {
             />
           ) : (
             <div className="flex flex-col gap-4">
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-muted/40 p-3">
+                <span className="text-sm text-muted-foreground">
+                  Выбрано для сравнения: {compare.ids.length} из {MAX_COMPARE}
+                </span>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    disabled={!compare.canCompare}
+                    onClick={() => compare.clear()}
+                  >
+                    Очистить
+                  </Button>
+                  <Button
+                    size="sm"
+                    data-track="fake_door_compare"
+                    disabled={!compare.canCompare}
+                    onClick={() => setCompareOpen(true)}
+                  >
+                    Сравнить
+                  </Button>
+                </div>
+              </div>
               {configs.map((c) => {
                 const s = configStats({ parts: c.parts });
+                const selected = compare.isSelected(c.id);
+                const atLimit = compare.ids.length >= MAX_COMPARE && !selected;
                 return (
                   <Card key={c.id} className="gap-3 p-4">
                     <div className="flex flex-wrap items-center justify-between gap-2">
@@ -393,6 +423,14 @@ export default function Profile() {
                     <ConfigPartsTable parts={c.parts} showStale={c.source !== "ready"} />
                     <div className="flex flex-wrap gap-2">
                       <Button
+                        variant={selected ? "default" : "secondary"}
+                        disabled={atLimit}
+                        title={atLimit ? "Можно сравнить не более 3 конфигураций" : undefined}
+                        onClick={() => compare.toggle(c.id)}
+                      >
+                        {selected ? "В сравнении" : "Добавить к сравнению"}
+                      </Button>
+                      <Button
                         variant="secondary"
                         onClick={() => navigate("/config", { state: { fromReady: c } })}
                       >
@@ -412,6 +450,12 @@ export default function Profile() {
               </div>
             </div>
           )}
+          <ComingSoonDialog
+            open={compareOpen}
+            onClose={() => setCompareOpen(false)}
+            title="Сравнение скоро появится"
+            description="Мы работаем над сравнением конфигураций. Скоро вы сможете сопоставить выбранные сборки."
+          />
         </section>
       ) : activeTab === "orders" ? (
         <section aria-label="История заказов">
@@ -500,7 +544,7 @@ export default function Profile() {
           )}
         </section>
       ) : activeTab === "admin-users" ? (
-        <section aria-label="Администрирование пользователей">
+        <section aria-label="Администрирование">
           <Admin embedded />
         </section>
       ) : activeTab === "components" ? (
