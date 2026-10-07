@@ -194,7 +194,7 @@ test.describe("regression: components & vendors", () => {
     const res = await request.post("/api/session", { data: { email: "customer@example.com", name: "Клиент" } });
     const { sessionId } = await res.json();
     const cookie = `confi_session=${sessionId}`;
-    for (const path of ["/api/ai/component-description", "/api/ai/component-image"]) {
+    for (const path of ["/api/ai/component-description", "/api/ai/component-image", "/api/ai/component-image/discard"]) {
       const r = await request.post(path, { headers: { cookie }, data: { name: "Ryzen 5 5600", brand: "AMD" } });
       expect(r.status()).toBe(403);
     }
@@ -226,6 +226,46 @@ test.describe("regression: components & vendors", () => {
     });
     expect(bad.status()).toBe(400);
     expect((await bad.json()).error).toBe("invalid_input");
+  });
+
+  test("AI discard removes only unused uploads", async ({ request }) => {
+    const seller = await request.post("/api/session", { data: { email: "user@company.com", name: "Продавец Confi" } });
+    const cookie = `confi_session=${(await seller.json()).sessionId}`;
+
+    const used = await (await request.post("/api/uploads", {
+      headers: { cookie },
+      data: { dataUrl: PNG_DATA_URL },
+    })).json();
+    const orphan = await (await request.post("/api/uploads", {
+      headers: { cookie },
+      data: { dataUrl: PNG_DATA_URL },
+    })).json();
+
+    const partId = "cpu-r5-5600";
+    await request.patch(`/api/components/${partId}`, {
+      headers: { cookie },
+      data: { image: used.url },
+    });
+
+    // Empty/invalid payloads are a no-op success.
+    const bad = await request.post("/api/ai/component-image/discard", {
+      headers: { cookie },
+      data: { urls: "not-an-array" },
+    });
+    expect(bad.ok()).toBeTruthy();
+    expect((await request.get(orphan.url)).ok()).toBeTruthy();
+
+    // Only the unreferenced file is deleted; the in-use one survives.
+    const res = await request.post("/api/ai/component-image/discard", {
+      headers: { cookie },
+      data: { urls: [used.url, orphan.url, "https://evil.example/x.png", 42] },
+    });
+    expect(res.ok()).toBeTruthy();
+    expect((await request.get(used.url)).ok()).toBeTruthy();
+    expect((await request.get(orphan.url)).ok()).toBe(false);
+
+    // Clean up: detach the reference so prune can reclaim the file.
+    await request.patch(`/api/components/${partId}`, { headers: { cookie }, data: { image: "" } });
   });
 
   test("POST/PATCH components persists description", async ({ request }) => {

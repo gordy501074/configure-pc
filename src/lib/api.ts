@@ -817,14 +817,105 @@ export async function generateComponentDescription(
 }
 
 /**
- * Ask the model to find a component photo (web search) and download it.
- * Returns the served `/api/uploads/<file>` URL. Throws with the server error
- * code on failure.
+ * Progress event streamed (NDJSON) by `POST /ai/component-image`.
  */
-export async function findComponentImage(input: ComponentAiInput): Promise<string> {
-  const r = await req<{ url: string }>("/ai/component-image", {
+export type ImageStreamEvent =
+  | { event: "start"; deadlineMs: number }
+  | { event: "phase"; phase: "search_pages" | "download"; pages?: number }
+  | { event: "candidate"; url: string; index: number }
+  | { event: "done"; urls: string[] }
+  | { event: "error"; error: string };
+
+export interface StreamComponentImagesOptions {
+  signal?: AbortSignal;
+  onEvent?: (ev: ImageStreamEvent) => void;
+}
+
+/**
+ * Ask the model to find component photos (web search) and download candidate
+ * images. Reads the NDJSON progress stream, invoking `onEvent` per event, and
+ * resolves with the candidate `/api/uploads/<file>` URLs from the final `done`
+ * event (or the ones collected before an abort). Throws with the server error
+ * code (`ai_not_configured` / `ai_failed`) when the stream fails to start or
+ * emits an `error` event.
+ */
+export async function streamComponentImages(
+  input: ComponentAiInput,
+  opts: StreamComponentImagesOptions = {},
+): Promise<string[]> {
+  const res = await fetch(`${BASE}/ai/component-image`, {
     method: "POST",
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
+    signal: opts.signal,
   });
-  return r.url;
+
+  if (!res.ok) {
+    let message = `HTTP ${res.status}`;
+    try {
+      const body = (await res.json()) as { error?: string };
+      if (body.error) message = body.error;
+    } catch {
+      /* ignore non-JSON errors */
+    }
+    throw new Error(message);
+  }
+  if (!res.body) throw new Error("ai_failed");
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  const candidates: string[] = [];
+  let errorMessage: string | null = null;
+
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let nl = buffer.indexOf("\n");
+      while (nl >= 0) {
+        const line = buffer.slice(0, nl).trim();
+        buffer = buffer.slice(nl + 1);
+        nl = buffer.indexOf("\n");
+        if (!line) continue;
+        let ev: ImageStreamEvent;
+        try {
+          ev = JSON.parse(line) as ImageStreamEvent;
+        } catch {
+          continue; // ignore malformed lines
+        }
+        opts.onEvent?.(ev);
+        if (ev.event === "candidate") {
+          candidates.push(ev.url);
+        } else if (ev.event === "done") {
+          candidates.length = 0;
+          candidates.push(...ev.urls);
+        } else if (ev.event === "error") {
+          errorMessage = ev.error;
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  if (errorMessage) throw new Error(errorMessage);
+  return candidates;
+}
+
+/**
+ * Best-effort cleanup of unselected AI candidates: deletes each
+ * `/api/uploads/<file>` unless a part still references it. Never throws.
+ */
+export async function discardComponentImages(urls: string[]): Promise<void> {
+  if (urls.length === 0) return;
+  try {
+    await req<{ ok: boolean }>("/ai/component-image/discard", {
+      method: "POST",
+      body: JSON.stringify({ urls }),
+    });
+  } catch {
+    /* best-effort cleanup only */
+  }
 }

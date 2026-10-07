@@ -28,7 +28,7 @@ import { SELLER_ORDER_TRANSITIONS } from "../lib/orderStatus.ts";
 import { IMAGE_MIME_EXT, MAX_IMAGE_BYTES } from "../lib/imageUpload.ts";
 import { matchesMagic, UPLOAD_EXT_MIME } from "./image-magic.ts";
 import { AiNotConfiguredError, AiRequestError, isAiConfigured } from "./ai/openrouter.ts";
-import { describeComponent, findComponentImage } from "./ai/component-ai.ts";
+import { describeComponent, streamComponentImages } from "./ai/component-ai.ts";
 import { components } from "../data/mock.ts";
 
 const app = express();
@@ -261,14 +261,78 @@ app.post("/api/ai/component-image", async (req, res) => {
   if (!input.name && !input.brand) {
     return res.status(400).json({ error: "invalid_input" });
   }
+  // Respond with a normal JSON 503 BEFORE switching to streaming headers so the
+  // client can reuse its standard error mapping.
   if (!isAiConfigured()) return res.status(503).json({ error: "ai_not_configured" });
+
+  res.status(200);
+  res.setHeader("Content-Type", "application/x-ndjson; charset=utf-8");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
+  res.flushHeaders?.();
+
+  const controller = new AbortController();
+  let finished = false;
+  const onClose = () => {
+    // Only a premature response close means the client went away. `res` `close`
+    // fires after `res.end()` too, hence the `writableEnded`/`finished` guard;
+    // `req` `close` fires as soon as the request BODY ends (not on disconnect),
+    // so it must never be used to abort the stream.
+    if (!finished && !res.writableEnded) controller.abort();
+  };
+  res.on("close", onClose);
+
+  const writeEvent = (ev: unknown): void => {
+    try {
+      res.write(`${JSON.stringify(ev)}\n`);
+      // Express 5 typings omit `flush`; it exists on the underlying Node response
+      // and is a harmless no-op when compression/buffering layers are absent.
+      (res as unknown as { flush?: () => void }).flush?.();
+    } catch {
+      /* client gone: keep draining to let `close` abort the work */
+    }
+  };
+
   try {
-    const url = await findComponentImage(input, UPLOADS_DIR);
-    if (!url) return res.status(502).json({ error: "ai_failed" });
-    res.json({ url });
-  } catch (err) {
-    sendAiError(res, err);
+    for await (const ev of streamComponentImages(input, UPLOADS_DIR, {
+      signal: controller.signal,
+    })) {
+      writeEvent(ev);
+    }
+  } catch {
+    writeEvent({ event: "error", error: "ai_failed" });
+  } finally {
+    finished = true;
+    res.off("close", onClose);
+    res.end();
   }
+});
+
+/** Validate a `/api/uploads/<file>` URL and delete it unless a part still uses it. */
+function discardUploadIfUnused(url: string): void {
+  if (!url.startsWith("/api/uploads/")) return;
+  const used = db
+    .prepare(`SELECT 1 FROM part WHERE image_url = ? LIMIT 1`)
+    .get(url);
+  if (used) return;
+  deleteUploadByUrl(url);
+}
+
+app.post("/api/ai/component-image/discard", (req, res) => {
+  if (!requireSellerOrAdmin(req, res)) return;
+  const body = (req.body ?? {}) as { urls?: unknown };
+  const urls = Array.isArray(body.urls)
+    ? body.urls.filter((u): u is string => typeof u === "string")
+    : [];
+  for (const url of urls) {
+    try {
+      discardUploadIfUnused(url);
+    } catch {
+      /* best-effort cleanup only */
+    }
+  }
+  res.json({ ok: true });
 });
 
 // ---- Catalog ----

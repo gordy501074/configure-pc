@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   LayoutGrid,
@@ -39,16 +39,23 @@ import { SortableTh } from "../components/ui/SortableTh";
 import {
   createPart,
   deactivatePart,
+  discardComponentImages,
   fetchParts,
   fetchVendors,
-  findComponentImage,
   generateComponentDescription,
   initializeCatalog,
   reactivatePart,
+  streamComponentImages,
   updatePart,
   uploadPartImage,
 } from "../lib/api";
+import type { ImageStreamEvent } from "../lib/api";
 import { PartImage } from "../components/shared/PartImage";
+import {
+  ImageCandidatePicker,
+  type ImageCandidate,
+  type ImagePickerStatus,
+} from "../components/shared/ImageCandidatePicker";
 import { ALLOWED_IMAGE_ACCEPT, ALLOWED_IMAGE_MIME_TYPES, MAX_IMAGE_BYTES } from "../lib/imageUpload";
 import type { ComponentCategory, Part, PartCompat, Vendor } from "../types";
 
@@ -189,6 +196,17 @@ export function ProfileComponents({ isAdmin }: { isAdmin: boolean }) {
   const [initOpen, setInitOpen] = useState(false);
   const [initBusy, setInitBusy] = useState(false);
   const [aiBusy, setAiBusy] = useState<null | "description" | "image">(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [imageStatus, setImageStatus] = useState<ImagePickerStatus>("searching");
+  const [imagePhase, setImagePhase] = useState<ImageStreamEvent | null>(null);
+  const [imageDeadlineMs, setImageDeadlineMs] = useState(45_000);
+  const [imageCandidates, setImageCandidates] = useState<ImageCandidate[]>([]);
+  const [imageError, setImageError] = useState<string | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  // Candidates collected by the just-finished search, kept for selection/discard.
+  const searchResultsRef = useRef<string[]>([]);
+  // Set when the user stops/closes/picks so the aborted fetch is ignored.
+  const pickerCancelledRef = useRef(false);
 
   const reload = useCallback(async () => {
     try {
@@ -390,15 +408,112 @@ export function ProfileComponents({ isAdmin }: { isAdmin: boolean }) {
       return;
     }
     setAiBusy("image");
+    setPickerOpen(true);
+    setImageStatus("searching");
+    setImagePhase(null);
+    setImageCandidates([]);
+    setImageError(null);
+    searchResultsRef.current = [];
+    pickerCancelledRef.current = false;
+    const controller = new AbortController();
+    abortRef.current = controller;
     try {
-      const url = await findComponentImage(aiInput());
-      set("image", url);
-      toast("Фото найдено");
-    } catch (err) {
-      handleAiError(err);
-    } finally {
+      const urls = await streamComponentImages(aiInput(), {
+        signal: controller.signal,
+        onEvent: (ev) => {
+          if (ev.event === "phase") setImagePhase(ev);
+          if (ev.event === "start") setImageDeadlineMs(ev.deadlineMs);
+          else if (ev.event === "candidate") {
+            setImageCandidates((prev) => [...prev, { url: ev.url, index: ev.index }]);
+          } else if (ev.event === "error") {
+            setImageError(ev.error);
+          }
+        },
+      });
+      searchResultsRef.current = urls;
+      if (urls.length === 0) {
+        setImageStatus("done");
+        setAiBusy(null);
+        return;
+      }
+      if (urls.length === 1) {
+        set("image", urls[0]);
+        setPickerOpen(false);
+        toast("Фото найдено");
+        setAiBusy(null);
+        return;
+      }
+      setImageCandidates(urls.map((url, i) => ({ url, index: i + 1 })));
+      setImageStatus("done");
       setAiBusy(null);
+    } catch (err) {
+      abortRef.current = null;
+      setAiBusy(null);
+      // A user-driven stop/close already handled the UI and cleanup.
+      if (pickerCancelledRef.current) return;
+      const message = err instanceof Error ? err.message : "";
+      if (message === "ai_not_configured" || message === "ai_failed") {
+        setImageError(message);
+        setImageStatus("error");
+        handleAiError(err);
+      } else {
+        // Aborted by the deadline or a transient fetch error: keep results.
+        if (searchResultsRef.current.length > 0) {
+          setImageCandidates(
+            searchResultsRef.current.map((url, i) => ({ url, index: i + 1 })),
+          );
+          setImageStatus("done");
+        } else {
+          setPickerOpen(false);
+          toast("Поиск остановлен", "info");
+        }
+      }
     }
+  };
+
+  const handlePickCandidate = (url: string) => {
+    pickerCancelledRef.current = true;
+    const all = searchResultsRef.current.length
+      ? searchResultsRef.current
+      : imageCandidates.map((c) => c.url);
+    const others = all.filter((u) => u !== url);
+    set("image", url);
+    setPickerOpen(false);
+    abortRef.current = null;
+    searchResultsRef.current = [];
+    toast("Фото найдено");
+    void discardComponentImages(others);
+  };
+
+  const handleStopSearch = () => {
+    pickerCancelledRef.current = true;
+    abortRef.current?.abort();
+    abortRef.current = null;
+    setAiBusy(null);
+    // Keep whatever was already downloaded for selection.
+    const found = imageCandidates.map((c) => c.url);
+    if (found.length > 0) {
+      searchResultsRef.current = found;
+      setImageStatus("done");
+    } else {
+      setPickerOpen(false);
+      toast("Поиск остановлен", "info");
+    }
+  };
+
+  const handleClosePicker = () => {
+    pickerCancelledRef.current = true;
+    abortRef.current?.abort();
+    abortRef.current = null;
+    setAiBusy(null);
+    setPickerOpen(false);
+    // Nothing was chosen: clean up every downloaded candidate (the search may
+    // still be in flight, so include thumbnails not yet in the results ref).
+    const all = searchResultsRef.current.length
+      ? searchResultsRef.current
+      : imageCandidates.map((c) => c.url);
+    void discardComponentImages(all);
+    searchResultsRef.current = [];
   };
 
   const handleImageFile = async (file: File) => {
@@ -683,6 +798,18 @@ export function ProfileComponents({ isAdmin }: { isAdmin: boolean }) {
           aiBusy={aiBusy}
         />
       </Modal>
+
+      <ImageCandidatePicker
+        open={pickerOpen}
+        onClose={handleClosePicker}
+        onSelect={handlePickCandidate}
+        onStop={handleStopSearch}
+        status={imageStatus}
+        phase={imagePhase}
+        deadlineMs={imageDeadlineMs}
+        candidates={imageCandidates}
+        error={imageError}
+      />
 
       <Modal
         open={initOpen}
