@@ -331,8 +331,9 @@ export function createCatalogRepository(db: Database): CatalogRepository {
            category=excluded.category, name=excluded.name, brand=excluded.brand,
            vendor_id=excluded.vendor_id,
            tdp_watt=excluded.tdp_watt, compat_json=excluded.compat_json,
-           specs_json=excluded.specs_json, image_url=excluded.image_url,
-           description=excluded.description,
+           specs_json=excluded.specs_json,
+           image_url=COALESCE(excluded.image_url, part.image_url),
+           description=COALESCE(excluded.description, part.description),
            is_active=1, is_available=1`,
       ).run(
         input.id,

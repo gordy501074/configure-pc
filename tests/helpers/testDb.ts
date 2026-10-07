@@ -11,8 +11,11 @@ import { migratePriceLists, migrateSellerBrandDescription, migrateUserAccount, m
 const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 export const TEST_DB_PATH = process.env.TEST_DB_PATH ?? join(root, ".test-data", "confi-test.db");
-export const API_PORT = Number(process.env.API_PORT ?? 8787);
-export const APP_PORT = Number(process.env.APP_PORT ?? 5173);
+// Dedicated ports so Playwright's `reuseExistingServer` never attaches to a
+// running dev app (`npm start`: API 8787 / Vite 5173) and mutates the real
+// `db/confi.db` (e.g. re-initializing the catalog would wipe AI photos/descriptions).
+export const API_PORT = Number(process.env.API_PORT ?? 8788);
+export const APP_PORT = Number(process.env.APP_PORT ?? 5174);
 export const APP_BASE = process.env.APP_BASE_URL ?? `http://localhost:${APP_PORT}`;
 
 const CATEGORIES = ["cpu", "gpu", "motherboard", "ram", "storage", "case", "psu", "cooler"] as const;

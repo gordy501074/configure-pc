@@ -360,4 +360,34 @@ test.describe("regression: components & vendors", () => {
     expect(pruned.ok()).toBeTruthy();
     expect(typeof (await pruned.json()).deleted).toBe("number");
   });
+
+  test("re-initializing the catalog preserves AI images and descriptions", async ({ request }) => {
+    const seller = await request.post("/api/session", { data: { email: "user@company.com", name: "Продавец Confi" } });
+    const sellerCookie = `confi_session=${(await seller.json()).sessionId}`;
+    const admin = await request.post("/api/session", { data: { email: "avgordeev@alfabank.ru", name: "Администратор" } });
+    const adminCookie = `confi_session=${(await admin.json()).sessionId}`;
+
+    const partId = "cpu-r5-5600";
+    const up = await (await request.post("/api/uploads", {
+      headers: { cookie: sellerCookie },
+      data: { dataUrl: PNG_DATA_URL },
+    })).json();
+    await request.patch(`/api/components/${partId}`, {
+      headers: { cookie: sellerCookie },
+      data: { image: up.url, description: "AI-описание процессора" },
+    });
+
+    try {
+      // Re-init replaces the catalog from the reference data (no image/description).
+      const init = await request.post("/api/catalog/initialize", { headers: { cookie: adminCookie } });
+      expect(init.ok()).toBeTruthy();
+
+      const parts = await (await request.get("/api/parts")).json() as { id: string; image?: string; description?: string }[];
+      const part = parts.find((p) => p.id === partId);
+      expect(part?.image).toBe(up.url);
+      expect(part?.description).toBe("AI-описание процессора");
+    } finally {
+      await request.patch(`/api/components/${partId}`, { headers: { cookie: sellerCookie }, data: { image: "", description: "" } });
+    }
+  });
 });
