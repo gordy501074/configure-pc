@@ -182,12 +182,6 @@ export function ImageCandidatePicker({
               ) : null}
             </div>
           ) : null}
-
-          {candidates.length > 0 && searching ? (
-            <p className="text-sm text-muted-foreground" role="status">
-              Осталось ~{remaining} с
-            </p>
-          ) : null}
         </div>
       </Modal>
 
