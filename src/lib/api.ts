@@ -5,6 +5,9 @@
 import type {
   AnalyticsPeriod,
   AppSettings,
+  AdvisorMessage,
+  AdvisorRequirements,
+  AdvisorStreamEvent,
   ComponentCategory,
   Config,
   Order,
@@ -925,4 +928,115 @@ export async function discardComponentImages(urls: string[]): Promise<void> {
   } catch {
     /* best-effort cleanup only */
   }
+}
+
+// ---- AI advisor (public chat) ----
+
+export interface StreamAdvisorChatOptions {
+  signal?: AbortSignal;
+  onEvent?: (ev: AdvisorStreamEvent) => void;
+}
+
+export interface AdvisorChatResult {
+  text: string;
+  requirements?: AdvisorRequirements;
+  recommendation?:
+    | { kind: "ready"; readyPcId: string; summary: string }
+    | { kind: "custom"; config: Config; summary: string };
+}
+
+/** Human-friendly RU message for an AI-advisor error code. */
+export function advisorErrorMessage(code: string | null | undefined): string {
+  switch (code) {
+    case "invalid_input":
+      return "Проверьте сообщение и попробуйте ещё раз.";
+    case "ai_not_configured":
+      return "AI-помощник ещё не настроен. Добавьте OPENROUTER_API_KEY на сервере и перезагрузите страницу.";
+    case "ai_failed":
+      return "Не удалось получить ответ от AI-помощника. Попробуйте ещё раз.";
+    case "rate_limited":
+      return "Слишком много сообщений. Подождите немного и повторите.";
+    case "ai_timeout":
+      return "AI-помощник не успел ответить. Попробуйте отправить сообщение ещё раз.";
+    default:
+      return "Что-то пошло не так. Попробуйте ещё раз.";
+  }
+}
+
+/**
+ * Stream one advisor turn (`POST /ai/advisor/chat`, NDJSON). Invokes
+ * `onEvent` per event and resolves with the accumulated text + recommendation.
+ * Throws with the server error code (`ai_not_configured` / `rate_limited` /
+ * `invalid_input` / `ai_failed`) when the stream fails to start or emits an
+ * `error` event.
+ */
+export async function streamAdvisorChat(
+  payload: { messages: AdvisorMessage[]; sellerId?: string; requirements?: AdvisorRequirements },
+  opts: StreamAdvisorChatOptions = {},
+): Promise<AdvisorChatResult> {
+  const res = await fetch(`${BASE}/ai/advisor/chat`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+    signal: opts.signal,
+  });
+
+  if (!res.ok) {
+    let message = `HTTP ${res.status}`;
+    try {
+      const body = (await res.json()) as { error?: string };
+      if (body.error) message = body.error;
+    } catch {
+      /* ignore non-JSON errors */
+    }
+    throw new Error(message);
+  }
+  if (!res.body) throw new Error("ai_failed");
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let text = "";
+  let requirements: AdvisorRequirements | undefined;
+  let recommendation: AdvisorChatResult["recommendation"];
+  let errorMessage: string | null = null;
+
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let nl = buffer.indexOf("\n");
+      while (nl >= 0) {
+        const line = buffer.slice(0, nl).trim();
+        buffer = buffer.slice(nl + 1);
+        nl = buffer.indexOf("\n");
+        if (!line) continue;
+        let ev: AdvisorStreamEvent;
+        try {
+          ev = JSON.parse(line) as AdvisorStreamEvent;
+        } catch {
+          continue; // ignore malformed lines
+        }
+        opts.onEvent?.(ev);
+        if (ev.event === "delta") {
+          text += ev.text;
+        } else if (ev.event === "requirements") {
+          requirements = ev.data;
+        } else if (ev.event === "recommendation") {
+          recommendation =
+            ev.kind === "ready"
+              ? { kind: "ready", readyPcId: ev.readyPcId!, summary: ev.summary }
+              : { kind: "custom", config: ev.config!, summary: ev.summary };
+        } else if (ev.event === "error") {
+          errorMessage = ev.error;
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  if (errorMessage) throw new Error(errorMessage);
+  return { text, requirements, recommendation };
 }

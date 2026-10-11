@@ -21,7 +21,7 @@
     "typecheck": "tsc --noEmit && tsc -p tsconfig.server.json",
     "test:typecheck": "tsc -p tsconfig.tests.json",
     "test:unit": "node --experimental-strip-types --test \"tests/unit/*.test.ts\"",
-    "test:unit:cov": "node --experimental-strip-types --experimental-test-coverage --test-coverage-include=\"src/lib/format.ts\" --test-coverage-include=\"src/lib/compatibility.ts\" --test-coverage-include=\"src/lib/analytics/redact.ts\" --test-coverage-lines=99 --test \"tests/unit/*.test.ts\"",
+    "test:unit:cov": "node --experimental-strip-types --experimental-test-coverage --test-coverage-include=\"src/lib/format.ts\" --test-coverage-include=\"src/lib/compatibility.ts\" --test-coverage-include=\"src/lib/analytics/redact.ts\" --test-coverage-include=\"src/lib/aiAdvisor.ts\" --test-coverage-lines=99 --test \"tests/unit/*.test.ts\"",
     "server": "node --experimental-strip-types src/server/index.ts",
     "server:dev": "node --experimental-strip-types --watch src/server/index.ts",
     "db:analytics": "node db/analytics.js",

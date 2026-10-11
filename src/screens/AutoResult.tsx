@@ -32,9 +32,15 @@ export default function AutoResult() {
   const [loadState, setLoadState] = useState<"loading" | "done">("loading");
   const [reviewOpen, setReviewOpen] = useState(false);
   const [catalog, setCatalog] = useState<Record<ComponentCategory, Part[]> | null>(null);
+  const stateConfig = (location.state as { config?: Config } | null)?.config;
   const answers = (location.state as { answers?: SurveyAnswers } | null)?.answers;
 
   useEffect(() => {
+    // A config passed straight through (AI advisor) renders immediately.
+    if (stateConfig) {
+      setLoadState("done");
+      return;
+    }
     if (!answers) return;
     let cancelled = false;
     fetchCatalog(sellerId).then((c) => {
@@ -49,18 +55,20 @@ export default function AutoResult() {
   }, [sellerId]);
 
   const cfg: Config | null = useMemo(
-    () => (answers && catalog ? buildRecommendation(answers, catalog) : null),
-    [answers, catalog],
+    () =>
+      stateConfig ??
+      (answers && catalog ? buildRecommendation(answers, catalog) : null),
+    [stateConfig, answers, catalog],
   );
 
-  if (!answers) {
+  if (!answers && !stateConfig) {
     return (
       <div className="container">
         <Breadcrumbs items={[{ label: "Главная", to: "/" }, { label: "Автоподбор", to: "/auto" }]} />
         <EmptyState
           title="Нет данных для подбора"
-          description="Пройдите опросник автоподбора, чтобы получить рекомендацию."
-          actionLabel="К опроснику"
+          description="Пройдите опросник автоподбора или попросите AI-бота подобрать сборку."
+          actionLabel="К автоподбору"
           onAction={() => navigate("/auto")}
         />
       </div>
@@ -135,16 +143,23 @@ export default function AutoResult() {
       <div className="flex flex-col gap-6">
         <div className="flex flex-col gap-3 pt-4">
           <div className="flex flex-wrap gap-2">
-            <Badge variant="secondary">{budgetTier(answers.budget)} сегмент</Badge>
-            <Badge variant="info">{USAGE_LABELS[answers.usage]}</Badge>
-            <Badge variant="neutral">
-              Платформа {answers.ecosystem === "intel" ? "Intel" : "AMD"}
-            </Badge>
+            {answers ? (
+              <>
+                <Badge variant="secondary">{budgetTier(answers.budget)} сегмент</Badge>
+                <Badge variant="info">{USAGE_LABELS[answers.usage]}</Badge>
+                <Badge variant="neutral">
+                  Платформа {answers.ecosystem === "intel" ? "Intel" : "AMD"}
+                </Badge>
+              </>
+            ) : cfg.usage ? (
+              <Badge variant="info">{USAGE_LABELS[cfg.usage] ?? cfg.usage}</Badge>
+            ) : null}
           </div>
           <h1 className="text-3xl font-bold">{cfg.name}</h1>
           <p className="text-muted-foreground">
-            Собрано под ваши приоритеты и бюджет{" "}
-            {new Intl.NumberFormat("ru-RU").format(answers.budget)} ₽.
+            {answers
+              ? `Собрано под ваши приоритеты и бюджет ${new Intl.NumberFormat("ru-RU").format(answers.budget)} ₽.`
+              : "Подобрано AI-помощником по вашим задачам и бюджету."}
           </p>
         </div>
 

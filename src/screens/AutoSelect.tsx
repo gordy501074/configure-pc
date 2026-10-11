@@ -1,10 +1,12 @@
 import { useState, type FormEvent } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 
-import { Breadcrumbs, Button, Card, useToast } from "../components/ui";
+import { Breadcrumbs, Button, Card, Tabs, TabsList, TabsTrigger, TabsContent, useToast } from "../components/ui";
 import { cn } from "../lib/utils";
 import { BUDGET_PRESETS } from "../lib/survey";
 import type { Ecosystem, Priority, SurveyAnswers, Usage } from "../types";
+
+import AutoChat from "./AutoChat";
 
 interface StepProps {
   answers: SurveyAnswers;
@@ -160,6 +162,7 @@ const STEPS = [BudgetStep, UsageStep, EcosystemStep, PriorityStep];
 export default function AutoSelect() {
   const navigate = useNavigate();
   const { toast } = useToast();
+  const [params, setParams] = useSearchParams();
   const [step, setStep] = useState(0);
   const [answers, setAnswers] = useState<SurveyAnswers>({
     budget: 120000,
@@ -167,6 +170,13 @@ export default function AutoSelect() {
     ecosystem: "amd",
     priority: "perf",
   });
+
+  const mode = params.get("mode") === "ai" ? "ai" : "survey";
+
+  const onModeChange = (value: string) => {
+    const next = value === "ai" ? "ai" : "survey";
+    setParams(next === "ai" ? { mode: "ai" } : {}, { replace: true });
+  };
 
   const StepComponent = STEPS[step];
   const isLast = step === STEPS.length - 1;
@@ -186,33 +196,46 @@ export default function AutoSelect() {
       <Breadcrumbs items={[{ label: "Главная", to: "/" }, { label: "Автоподбор" }]} />
       <h1 className="text-3xl font-bold">Автоподбор ПК</h1>
       <p className="mb-5 mt-1 text-muted-foreground">
-        Ответьте на вопросы — подберём сборку под ваши задачи и бюджет.
+        Подберите сборку под ваши задачи и бюджет — по опроснику или в диалоге с AI-ботом.
       </p>
 
-      <div className="mb-2 h-1.5 w-full overflow-hidden rounded-full bg-muted" aria-hidden="true">
-        <span
-          className="block h-full rounded-full bg-primary transition-all"
-          style={{ width: `${((step + 1) / STEPS.length) * 100}%` }}
-        />
-      </div>
+      <Tabs value={mode} onValueChange={onModeChange} className="gap-4">
+        <TabsList>
+          <TabsTrigger value="survey">Опросник</TabsTrigger>
+          <TabsTrigger value="ai">Подбор с помощью AI-бота</TabsTrigger>
+        </TabsList>
 
-      <Card className="p-6">
-        <form onSubmit={onSubmit} noValidate>
-          <StepComponent answers={answers} setAnswers={setAnswers} />
-          <div className="mt-6 flex items-center justify-between">
-            {step > 0 ? (
-              <Button type="button" variant="ghost" onClick={() => setStep((s) => s - 1)}>
-                Назад
-              </Button>
-            ) : (
-              <span />
-            )}
-            <Button type="submit" size="lg">
-              {isLast ? "Подобрать" : "Далее"}
-            </Button>
+        <TabsContent value="survey" className="flex flex-col gap-4">
+          <div className="mb-2 h-1.5 w-full overflow-hidden rounded-full bg-muted" aria-hidden="true">
+            <span
+              className="block h-full rounded-full bg-primary transition-all"
+              style={{ width: `${((step + 1) / STEPS.length) * 100}%` }}
+            />
           </div>
-        </form>
-      </Card>
+
+          <Card className="p-6">
+            <form onSubmit={onSubmit} noValidate>
+              <StepComponent answers={answers} setAnswers={setAnswers} />
+              <div className="mt-6 flex items-center justify-between">
+                {step > 0 ? (
+                  <Button type="button" variant="ghost" onClick={() => setStep((s) => s - 1)}>
+                    Назад
+                  </Button>
+                ) : (
+                  <span />
+                )}
+                <Button type="submit" size="lg">
+                  {isLast ? "Подобрать" : "Далее"}
+                </Button>
+              </div>
+            </form>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="ai">
+          <AutoChat />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

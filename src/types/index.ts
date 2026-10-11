@@ -192,6 +192,44 @@ export interface SurveyAnswers {
   priority: Priority;
 }
 
+/** Requirements extracted by the AI advisor from the chat dialog. */
+export interface AdvisorRequirements {
+  /** Target budget in RUB. */
+  budget?: number;
+  /** Primary use-case. */
+  usage?: Usage;
+  /** Professions / hobbies (free text). */
+  interests?: string[];
+  /** Priorities such as «тишина», «производительность», «цена». */
+  priorities?: string[];
+  /** Preferred platform. */
+  ecosystem?: Ecosystem;
+  /** Explicit build-type preference: a ready build or a custom one from parts. */
+  buildType?: "ready" | "custom";
+  notes?: string;
+}
+
+/** One message in the AI-advisor chat. */
+export interface AdvisorMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
+/** NDJSON event streamed by `POST /api/ai/advisor/chat`. */
+export type AdvisorStreamEvent =
+  | { event: "start"; deadlineMs: number }
+  | { event: "delta"; text: string }
+  | { event: "requirements"; data: AdvisorRequirements }
+  | {
+      event: "recommendation";
+      kind: "ready" | "custom";
+      readyPcId?: string;
+      config?: Config;
+      summary: string;
+    }
+  | { event: "done" }
+  | { event: "error"; error: string };
+
 /** A brand owned by a seller. */
 export interface SellerBrand {
   brand: string;

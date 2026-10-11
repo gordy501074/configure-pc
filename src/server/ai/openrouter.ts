@@ -21,6 +21,7 @@ export type ChatPlugin = NonNullable<ChatRequest["plugins"]>[number];
 
 const DEFAULT_TEXT_MODEL = "deepseek/deepseek-v4.1-flash";
 const DEFAULT_IMAGE_MODEL = "google/gemini-2.5-flash-lite";
+const DEFAULT_CHAT_MODEL = "google/gemini-2.5-flash-lite";
 const DEFAULT_APP_URL = "http://localhost:5173";
 const DEFAULT_APP_TITLE = "Confi";
 const REQUEST_TIMEOUT_MS = 90_000;
@@ -65,6 +66,11 @@ export function getTextModel(): string {
 /** Image-search model id (env override, otherwise the text default). */
 export function getImageModel(): string {
   return process.env.OPENROUTER_IMAGE_MODEL?.trim() || DEFAULT_IMAGE_MODEL;
+}
+
+/** Chat (AI-advisor) model id (env override, otherwise the cheap default). */
+export function getChatModel(): string {
+  return process.env.OPENROUTER_CHAT_MODEL?.trim() || DEFAULT_CHAT_MODEL;
 }
 
 /** Build the SDK `HTTPClient` used in proxy mode (dynamic `undici` import). */
@@ -169,6 +175,8 @@ export interface ChatInput {
   temperature?: number;
   /** Optional OpenRouter plugins (e.g. the web-search plugin `{ id: "web" }`). */
   plugins?: ChatPlugin[];
+  /** Abort the model call (e.g. on client disconnect / deadline). */
+  signal?: AbortSignal;
 }
 
 /**
@@ -194,13 +202,14 @@ export async function chatComplete(input: ChatInput): Promise<string> {
           stream: false,
           ...(input.plugins ? { plugins: input.plugins } : {}),
         },
-      })) as { choices?: ChatMessageLike[] };
+      }, input.signal ? { signal: input.signal } : undefined)) as { choices?: ChatMessageLike[] };
       const text = contentToText(result.choices?.[0]?.message?.content);
       if (!text.trim()) throw new AiRequestError("empty_response");
       return text;
     } catch (err) {
       lastError = err;
       if (err instanceof AiNotConfiguredError) throw err;
+      if (input.signal?.aborted) break;
       if (attempt < MAX_RETRIES && isRetryable(err)) {
         await sleep(400 * (attempt + 1));
         continue;
@@ -211,6 +220,71 @@ export async function chatComplete(input: ChatInput): Promise<string> {
 
   if (lastError instanceof AiRequestError) throw lastError;
   throw new AiRequestError();
+}
+
+export interface StreamChatInput {
+  /** Full LLM message list ([system, ...history, user]). */
+  messages: Array<{ role: "system" | "user" | "assistant"; content: string }>;
+  model?: string;
+  temperature?: number;
+  /** Abort the underlying model call when the client disconnects. */
+  signal?: AbortSignal;
+}
+
+/** Type of a single OpenRouter streaming chunk (SDK union). */
+interface StreamChunkLike {
+  choices?: Array<{
+    delta?: { content?: string | null };
+  }>;
+}
+
+function isStreamChunkLike(v: unknown): v is StreamChunkLike {
+  return !!v && typeof v === "object" && Array.isArray((v as StreamChunkLike).choices);
+}
+
+/**
+ * Stream a chat completion as text deltas (one yielded string per chunk).
+ * Reuses the shared retry/timeout/proxy machinery from `openrouter.ts` via
+ * `getClient()`. When `input.signal` aborts, the generator stops early and the
+ * signal is forwarded to the SDK so the upstream request is cancelled too.
+ */
+export async function* chatStream(
+  input: StreamChatInput,
+): AsyncGenerator<string> {
+  const client = await getClient();
+  const model = input.model ?? getChatModel();
+  const result = await client.chat.send(
+    {
+      chatRequest: {
+        model,
+        messages: input.messages as never,
+        temperature: input.temperature ?? 0.5,
+        stream: true,
+      },
+    },
+    input.signal ? { signal: input.signal } : undefined,
+  );
+
+  if (result === null || typeof result !== "object") {
+    throw new AiRequestError("empty_response");
+  }
+  if (!("getReader" in result) || typeof (result as { getReader?: unknown }).getReader !== "function") {
+    // A non-streaming response came back despite stream:true — read the full
+    // assistant message from `choices[0]` and yield it once.
+    const choice = (result as { choices?: ChatMessageLike[] }).choices?.[0];
+    const text = contentToText(choice?.message?.content);
+    if (!text.trim()) throw new AiRequestError("empty_response");
+    yield text;
+    return;
+  }
+
+  const stream = result as unknown as AsyncIterable<unknown>;
+  for await (const raw of stream) {
+    if (input.signal?.aborted) break;
+    if (!isStreamChunkLike(raw)) continue;
+    const delta = raw.choices?.[0]?.delta?.content;
+    if (typeof delta === "string" && delta.length > 0) yield delta;
+  }
 }
 
 /**

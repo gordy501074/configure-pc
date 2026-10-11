@@ -30,6 +30,8 @@ import { IMAGE_MIME_EXT, MAX_IMAGE_BYTES } from "../lib/imageUpload.ts";
 import { matchesMagic, UPLOAD_EXT_MIME } from "./image-magic.ts";
 import { AiNotConfiguredError, AiRequestError, isAiConfigured } from "./ai/openrouter.ts";
 import { describeComponent, streamComponentImages } from "./ai/component-ai.ts";
+import { streamAdvisorReply } from "./ai/pc-advisor.ts";
+import type { AdvisorCatalog } from "../lib/aiAdvisor.ts";
 import { components } from "../data/mock.ts";
 
 const app = express();
@@ -61,6 +63,17 @@ const salesAnalytics = createSalesAnalyticsRepository(db);
 const priceLists = createPriceListRepository(db);
 
 const VALID_ROLES: UserRole[] = ["customer", "seller", "admin"];
+
+const CATEGORY_ORDER: ComponentCategory[] = [
+  "cpu",
+  "gpu",
+  "motherboard",
+  "ram",
+  "storage",
+  "case",
+  "psu",
+  "cooler",
+];
 
 /** Resolve the acting user id: explicit body/query user or surrogate session. */
 function actorId(req: express.Request): string {
@@ -334,6 +347,223 @@ app.post("/api/ai/component-image/discard", (req, res) => {
     }
   }
   res.json({ ok: true });
+});
+
+// ---- AI advisor (public chat endpoint) ----
+
+const ADVISOR_WINDOW_MS = 10 * 60 * 1000;
+const ADVISOR_MAX_REQUESTS = 30;
+const ADVISOR_MAX_MESSAGES = 20;
+const ADVISOR_MAX_MESSAGE_CHARS = 2000;
+const ADVISOR_MAX_TOTAL_CHARS = 8000;
+/** Hard cap on tracked rate-limit keys to bound memory under key rotation. */
+const ADVISOR_MAX_TRACKED_KEYS = 10_000;
+
+/**
+ * In-memory sliding-window rate limiter keyed by a server-derived identity.
+ * Bounded in size: when `maxKeys` is exceeded the oldest entries are evicted,
+ * so a client rotating keys cannot grow the Map without limit.
+ */
+class SlidingWindowLimiter {
+  private hits = new Map<string, number[]>();
+  private timer: NodeJS.Timeout | null = null;
+  private readonly maxKeys: number;
+
+  constructor(maxKeys: number) {
+    this.maxKeys = maxKeys;
+  }
+
+  allow(key: string, max: number, windowMs: number): boolean {
+    const now = Date.now();
+    const cutoff = now - windowMs;
+    const existing = (this.hits.get(key) ?? []).filter((t) => t > cutoff);
+    if (existing.length >= max) {
+      // Refresh recency for the LRU cap without recording a new hit.
+      this.hits.delete(key);
+      this.hits.set(key, existing);
+      return false;
+    }
+    existing.push(now);
+    this.hits.set(key, existing);
+    this.evictIfNeeded();
+    this.scheduleCleanup(windowMs);
+    return true;
+  }
+
+  /** Drop the oldest-inserted keys once the cap is exceeded (Map is insertion-ordered). */
+  private evictIfNeeded(): void {
+    while (this.hits.size > this.maxKeys) {
+      const oldest = this.hits.keys().next().value;
+      if (oldest === undefined) break;
+      this.hits.delete(oldest);
+    }
+  }
+
+  private scheduleCleanup(windowMs: number): void {
+    if (this.timer) return;
+    this.timer = setTimeout(() => {
+      this.timer = null;
+      const cutoff = Date.now() - windowMs;
+      for (const [key, ts] of this.hits) {
+        const kept = ts.filter((t) => t > cutoff);
+        if (kept.length === 0) this.hits.delete(key);
+        else this.hits.set(key, kept);
+      }
+    }, windowMs);
+    this.timer.unref?.();
+  }
+}
+
+const advisorLimiter = new SlidingWindowLimiter(ADVISOR_MAX_TRACKED_KEYS);
+
+/**
+ * Resolve the client IP. `x-forwarded-for` is only trusted when `TRUST_PROXY`
+ * is set, otherwise a client could spoof the header to rotate its rate-limit key.
+ */
+function clientIp(req: express.Request): string {
+  if (process.env.TRUST_PROXY === "1") {
+    const fwd = req.headers["x-forwarded-for"];
+    if (typeof fwd === "string" && fwd.trim()) return fwd.split(",")[0].trim();
+  }
+  return req.socket.remoteAddress ?? "unknown";
+}
+
+/**
+ * Short-TTL cache for the advisor catalog (ready builds + orderable parts).
+ * The catalog is read-only here and changes rarely; caching avoids repeating
+ * the full per-part price resolution on every chat turn. Bounded in size.
+ */
+const ADVISOR_CATALOG_TTL_MS = 30_000;
+const ADVISOR_CATALOG_MAX_ENTRIES = 50;
+const advisorCatalogCache = new Map<string, { at: number; catalog: AdvisorCatalog }>();
+
+function loadAdvisorCatalog(seller: string): AdvisorCatalog {
+  const now = Date.now();
+  const cached = advisorCatalogCache.get(seller);
+  if (cached && now - cached.at < ADVISOR_CATALOG_TTL_MS) {
+    // Refresh recency for the LRU eviction below.
+    advisorCatalogCache.delete(seller);
+    advisorCatalogCache.set(seller, cached);
+    return cached.catalog;
+  }
+  const ready = catalog
+    .listReadyPcs(seller)
+    .filter((pc) => pc.valid !== false)
+    .map((pc) => ({ ...pc, sellerId: pc.sellerId ?? undefined }));
+  const parts = {} as Record<ComponentCategory, PartDto[]>;
+  for (const c of CATEGORY_ORDER) {
+    parts[c] = catalog.listParts(c, false, seller).filter(
+      (p) => p.available && p.priceSet === true && (p.price ?? 0) > 0,
+    );
+  }
+  const catalogDto: AdvisorCatalog = { ready, parts };
+  advisorCatalogCache.set(seller, { at: now, catalog: catalogDto });
+  while (advisorCatalogCache.size > ADVISOR_CATALOG_MAX_ENTRIES) {
+    const oldest = advisorCatalogCache.keys().next().value;
+    if (oldest === undefined) break;
+    advisorCatalogCache.delete(oldest);
+  }
+  return catalogDto;
+}
+
+/** Coerce an advisor chat body into a typed shape (best-effort). */
+function parseAdvisorBody(body: unknown): {
+  messages: { role: "user" | "assistant"; content: string }[];
+  sellerId?: string;
+  /** Requirements from earlier turns, normalized by the advisor. */
+  known: unknown;
+} {
+  const b = (body ?? {}) as Record<string, unknown>;
+  const rawMessages = Array.isArray(b.messages) ? b.messages : [];
+  const messages = rawMessages
+    .filter((m): m is Record<string, unknown> => !!m && typeof m === "object")
+    .map((m) => ({
+      role: m.role,
+      content: typeof m.content === "string" ? m.content : "",
+    }))
+    .filter(
+      (m): m is { role: "user" | "assistant"; content: string } =>
+        (m.role === "user" || m.role === "assistant") && typeof m.content === "string",
+    );
+  const sellerId =
+    typeof b.sellerId === "string" && b.sellerId.trim() ? b.sellerId.trim().slice(0, 200) : undefined;
+  return { messages, sellerId, known: b.requirements };
+}
+
+app.post("/api/ai/advisor/chat", async (req, res) => {
+  const { messages, sellerId, known } = parseAdvisorBody(req.body);
+  const last = messages[messages.length - 1];
+  if (!last || last.role !== "user" || !last.content.trim()) {
+    return res.status(400).json({ error: "invalid_input" });
+  }
+  if (messages.length > ADVISOR_MAX_MESSAGES) {
+    return res.status(400).json({ error: "invalid_input" });
+  }
+  // Bound every entry, not just the last, so prior history can't inflate the
+  // prompt/cost. Reject when the total transcript exceeds the budget.
+  let totalChars = 0;
+  for (const m of messages) {
+    if (m.content.length > ADVISOR_MAX_MESSAGE_CHARS) {
+      return res.status(400).json({ error: "invalid_input" });
+    }
+    totalChars += m.content.length;
+  }
+  if (totalChars > ADVISOR_MAX_TOTAL_CHARS) {
+    return res.status(400).json({ error: "invalid_input" });
+  }
+  // Guests are allowed like the rest of `/auto`; only rate-limit the chat.
+  // Key on the server-validated user id when authenticated (the session is
+  // resolved against the DB), otherwise on the socket address. A client-set
+  // cookie / `x-forwarded-for` can therefore not reset the budget by rotation.
+  const actor = actorRole(req);
+  const rateKey = actor ? `user:${actor.userId}` : `ip:${clientIp(req)}`;
+  if (!advisorLimiter.allow(rateKey, ADVISOR_MAX_REQUESTS, ADVISOR_WINDOW_MS)) {
+    return res.status(429).json({ error: "rate_limited" });
+  }
+  // Respond with a normal JSON 503 BEFORE switching to streaming headers so the
+  // client can reuse its standard error mapping.
+  if (!isAiConfigured()) return res.status(503).json({ error: "ai_not_configured" });
+
+  res.status(200);
+  res.setHeader("Content-Type", "application/x-ndjson; charset=utf-8");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
+  res.flushHeaders?.();
+
+  const controller = new AbortController();
+  let finished = false;
+  const onClose = () => {
+    if (!finished && !res.writableEnded) controller.abort();
+  };
+  res.on("close", onClose);
+
+  const writeEvent = (ev: unknown): void => {
+    try {
+      res.write(`${JSON.stringify(ev)}\n`);
+      (res as unknown as { flush?: () => void }).flush?.();
+    } catch {
+      /* client gone */
+    }
+  };
+
+const loadCatalog = async (seller: string): Promise<AdvisorCatalog> =>
+    loadAdvisorCatalog(seller);
+
+  try {
+    for await (const ev of streamAdvisorReply(
+      { messages, sellerId, known, signal: controller.signal },
+      { loadCatalog },
+    )) {
+      writeEvent(ev);
+    }
+  } catch {
+    writeEvent({ event: "error", error: "ai_failed" });
+  } finally {
+    finished = true;
+    res.off("close", onClose);
+    res.end();
+  }
 });
 
 // ---- Catalog ----

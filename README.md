@@ -32,6 +32,7 @@
 - **Недоступность компонентов** — деактивированный (`is_active=0`/`is_available=0`) или полностью удалённый при переинициализации компонент в сохранённой конфигурации/готовом ПК отображается как «**Компонент более недоступен для заказа**» (вместо названия и цены). Такая сборка считается **неполной** для заказа/сохранения; сумма и TDP считаются только по доступным компонентам.
 - **AI-помощник компонента (OpenRouter)** — на вкладке «Компоненты» (`seller`/`admin`) в форме компонента доступны кнопки **«Описание (AI)»** (краткое RU-описание в новое поле `part.description`) и **«Найти фото (AI)»** (поиск фото в веб и скачивание в `uploads/` с записью в `part.image_url`). Поиск фото идёт **NDJSON-потоком** (`/api/ai/component-image`) с countdown, прогрессом и живыми миниатюрами кандидатов (до 5); пользователь выбирает нужную, невыбранные удаляются эндпоинтом `/api/ai/component-image/discard`. Описание — синхронный JSON. При отсутствии ключа — `503 ai_not_configured`, при ошибке провайдера — `502 ai_failed`. Ключ `OPENROUTER_API_KEY` живёт только на сервере и не попадает на фронтенд/в логи.
 - **Рейтинг без отзывов** — у новой/заведённой вручную сборки без отзывов (`reviewCount=0`) вместо звёзд и «5,0» выводится «**Пока нет отзывов**»; новой сборке при создании проставляется `rating=0`.
+- **Подбор с помощью AI-бота** — на странице «Автоподбор» (`/auto`) вторая вкладка **«Подбор с помощью AI-бота»** (deep-link `?mode=ai`). Гость или авторизованный ведёт диалог на русском: бот узнаёт бюджет, назначение, профессию/хобби, приоритеты и платформу, а затем предлагает сборку **только из реального каталога и активного прайс-листа выбранного продавца**. Гибрид: LLM (`OPENROUTER_CHAT_MODEL`, по умолчанию `google/gemini-2.5-flash-lite`) ведёт диалог и на каждом шаге дописывает служебный JSON-конверт с требованиями; **цены и совместимость считает детерминированный серверный движок** (`src/lib/aiAdvisor.ts`) — по умолчанию **кастомная** сборка из комплектующих в рамках бюджета (список с ценами и итогом); **готовая** — только если пользователь прямо её просит. Ответ стримится по токенам (NDJSON, как «Найти фото»); при `recommendation` показывается карточка состава с ценами (для кастом — рассрочка), кнопка «Открыть сборку» (готовая → `/ready/:id`) или «Открыть / оформить» (кастом → `/auto/result` с переданной конфигурацией). Ограничения: непустое последнее сообщение ≤ 2000 символов, история ≤ 20; in-memory rate-limit (30 сообщений / 10 мин на сессию/IP). Без ключа — `503 ai_not_configured`; превышение лимита — `429 rate_limited`; пустой ввод — `400 invalid_input`.
 
 ## Технологии
 
@@ -76,7 +77,7 @@ src/
 │   ├── format.ts      # Форматирование цен, ватт, дат, телефонов, меток категорий
 │   └── utils.ts       # cn() — слияние CSS-классов
 ├── screens/           # Экраны (Home, Onboarding, Auth, ReadyPCs, PcCard,
-│                      #   CustomConfig, AutoSelect, AutoResult, Checkout,
+│                      #   CustomConfig, AutoSelect, AutoResult, AutoChat, Checkout,
 │                      #   InstallmentCheckout, Profile, ProfileComponents,
 │                      #   ProfilePriceLists, ProfileReadyBuilds, ProfileSellerOrders, Admin, NotFound, Layout)
 │   └── guards.tsx     # Гейты доступа: RequireAuth / RequireRole / RequireCustomer
@@ -103,7 +104,7 @@ src/
 | `/ready` | Готовые ПК |
 | `/ready/:id` | Карточка готового ПК |
 | `/config` | Ручной конфигуратор |
-| `/auto` | Автоподбор (опрос) |
+| `/auto` | Автоподбор (опрос + вкладка «Подбор с помощью AI-бота», `?mode=ai`) |
 | `/auto/result` | Результат автоподбора |
 | `/profile` | Профиль (по умолчанию первый раздел роли) — только авторизованные |
 | `/profile/:tab` | Профиль: клиент — `configs` / `orders` / `reviews`; админ — `admin-users` / `components` / `price-lists` / `ready-builds` / `customer-orders`; продавец — `brands` / `price-lists` / `components` / `ready-builds` / `customer-orders` — только авторизованные |
@@ -127,6 +128,7 @@ src/
 | `OPENROUTER_API_KEY` | API-ключ OpenRouter (обязателен для AI-функций). Получить: <https://openrouter.ai/keys> |
 | `OPENROUTER_MODEL` | Текстовая модель для описания (по умолчанию `deepseek/deepseek-v4.1-flash`) |
 | `OPENROUTER_IMAGE_MODEL` | Модель для поиска фото (по умолчанию `google/gemini-2.5-flash-lite`) |
+| `OPENROUTER_CHAT_MODEL` | Модель для AI-бота подбора (диалог + извлечение требований; по умолчанию `google/gemini-2.5-flash-lite`) |
 | `OPENROUTER_APP_URL` | Referer для атрибуции приложения (по умолчанию `http://localhost:5173`) |
 | `OPENROUTER_TITLE` | Название приложения в дашборде OpenRouter (по умолчанию `Confi`) |
 | `HTTPS_PROXY` / `HTTP_PROXY` | HTTP-прокси (опционально). Нужен там, где прямой доступ к `openrouter.ai` заблокирован (ответ `403`) |
@@ -246,6 +248,8 @@ API через Vite-прокси `/api → http://localhost:8787`.
   - `POST /api/ai/component-image` — тело то же → **NDJSON-поток** (`application/x-ndjson`) с событиями прогресса: `{"event":"start","deadlineMs":45000}`, `{"event":"phase","phase":"search_pages"}`, `{"event":"phase","phase":"download","pages":N}`, `{"event":"candidate","url":"/api/uploads/<file>","index":K}`, финальное `{"event":"done","urls":[…]}` (0..5) или `{"event":"error","error":"ai_failed"}`. Модель с веб-поиском возвращает **URL страниц товара** (надёжнее, чем прямые ссылки на картинки, которые модели часто выдумывают), сервер извлекает `og:image`/`twitter:image` и скачивает до 5 валидных изображений. Каждый URL валидируется (https-only, блокировка private/loopback/link-local/metadata после DNS с привязкой к проверенному IP, ≤3 редиректа, таймаут, ≤5 МБ, проверка magic-bytes). Клиент показывает countdown по `deadlineMs`, «живые» миниатюры и кнопку «Стоп» (обрыв соединения абортит загрузку; уже скачанные кандидаты остаются). При ровно одном кандидате фото подставляется автоматически, при нескольких — открывается модалка выбора.
   - `POST /api/ai/component-image/discard` — тело `{ urls: string[] }`; best-effort удаляет каждый невыбранный `/api/uploads/<file>`, если на него не ссылается ни один `part` → `{ ok: true }`
   - без ключа `/api/ai/component-image` отвечает обычным JSON `503 { error: "ai_not_configured" }` **до** старта стрима; `/api/ai/component-description` — тот же `503`; ошибка OpenRouter → `502 { error: "ai_failed" }`; пустое тело → `400 { error: "invalid_input" }`
+- AI-бот подбора (**публичный**, доступен гостю как и `/auto`):
+  - `POST /api/ai/advisor/chat` — тело `{ messages: [{ role: "user"|"assistant", content }], sellerId?, requirements? }` → **NDJSON-поток** событий `{event:"start",deadlineMs}`, `{event:"delta",text}`, `{event:"requirements",data}`, `{event:"recommendation",kind:"ready"|"custom",readyPcId?|config?,summary}`, `{event:"done"}` либо `{event:"error",error}`. LLM ведёт диалог и извлекает требования; серверный движок (`src/lib/aiAdvisor.ts`) собирает сборку из **реальных** данных активного прайса продавца (по умолчанию кастом в рамках бюджета; готовая — только по явной просьбе). До стрима: `503 { error: "ai_not_configured" }` без ключа, `429 { error: "rate_limited" }` при превышении лимита (30 сообщений / 10 мин на сессию/IP, окно скользящее), `400 { error: "invalid_input" }` при пустом последнем сообщении, длине > 2000 или истории > 20. Аборт по `res.on("close")`.
 - `GET/POST /api/onboarding` — онбординг
 - `POST /api/auth/request-code`, `POST /api/auth/verify` — мок-SMS
 - `POST /api/session`, `GET /api/session/:id`, `POST /api/session/logout` — сессия/пользователи
