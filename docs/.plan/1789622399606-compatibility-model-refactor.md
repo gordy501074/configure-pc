@@ -135,7 +135,7 @@
 
 ## Задача 7. Документация
 
-**Файлы:** `README.md`, `doc/base_prompt_v3.txt` (если актуализируется), `db/schema.sql` (комменты), `src/types/index.ts` (JSDoc `PartCompat`).
+**Файлы:** `README.md`, `docs/base_prompt_v3.txt` (если актуализируется), `db/schema.sql` (комменты), `src/types/index.ts` (JSDoc `PartCompat`).
 
 - README: раздел «Живая проверка совместимости» (стр. ~14) и «Структура проекта» — упомянуть
   `Part.compat`; список маркеров привести к новой структуре; убрать упоминания
