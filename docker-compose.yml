@@ -16,6 +16,10 @@ services:
     image: confi:latest
     container_name: confi
     restart: unless-stopped
+    # Разрешает обращаться к хосту из контейнера по host.docker.internal
+    # (для Linux-хостов; на Docker Desktop работает и без этого).
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       # Bind to loopback by default: the demo auth (mock SMS / email login) must
       # not be reachable from the network, otherwise an unauthenticated client
@@ -31,8 +35,15 @@ services:
       OPENROUTER_CHAT_MODEL: "${OPENROUTER_CHAT_MODEL:-}"
       OPENROUTER_APP_URL: "${OPENROUTER_APP_URL:-}"
       OPENROUTER_TITLE: "${OPENROUTER_TITLE:-Confi}"
-      HTTPS_PROXY: "${HTTPS_PROXY:-}"
-      HTTP_PROXY: "${HTTP_PROXY:-}"
+      # Прокси нужен только там, где прямой доступ к openrouter.ai заблокирован.
+      # ВАЖНО: Compose подставляет сюда значения из локального .env, но НЕ
+      # используйте host-адрес http://127.0.0.1:... — внутри контейнера это сам
+      # контейнер, и AI-запросы будут зависать. Чтобы избежать случайного
+      # протекания host-ового HTTP(S)_PROXY, читаем отдельные переменные
+      # DOCKER_HTTPS_PROXY / DOCKER_HTTP_PROXY (по умолчанию пусто = без прокси).
+      # Пример (прокси на хосте): DOCKER_HTTPS_PROXY=http://host.docker.internal:12334
+      HTTPS_PROXY: "${DOCKER_HTTPS_PROXY:-}"
+      HTTP_PROXY: "${DOCKER_HTTP_PROXY:-}"
     volumes:
       # БД вынесена в /data, чтобы том не перекрывал schema.sql/migrate.ts из образа.
       - confi-db:/data
