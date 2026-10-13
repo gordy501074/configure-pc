@@ -1,0 +1,4 @@
+# Keep container/CI scripts LF so shebangs survive checkout on Windows.
+*.sh text eol=lf
+Dockerfile text eol=lf
+docker-compose.yml text eol=lf
