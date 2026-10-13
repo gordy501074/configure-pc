@@ -7,7 +7,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const DB_PATH = join(root, "db", "confi.db");
+const DB_PATH = process.env.DB_PATH?.trim() || join(root, "db", "confi.db");
 const SQL = readFileSync(join(root, "db", "verify.sql"), "utf8");
 
 const db = new Database(DB_PATH, { readonly: true });

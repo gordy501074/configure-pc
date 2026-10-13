@@ -1,0 +1,43 @@
+# Confi — локальный запуск прототипа в Docker (один контейнер: собранный SPA + API).
+#
+#   docker compose up --build -d      # собрать и запустить
+#   docker compose logs -f            # смотреть логи
+#   docker compose down               # остановить (данные остаются в томах)
+#
+# Приложение: http://localhost:8787
+# Данные (SQLite) и загруженные фото живут в именованных томах confi-db / confi-uploads,
+# поэтому сохраняются между перезапусками и обновлениями образа.
+
+services:
+  confi:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: confi:latest
+    container_name: confi
+    restart: unless-stopped
+    ports:
+      # Bind to loopback by default: the demo auth (mock SMS / email login) must
+      # not be reachable from the network, otherwise an unauthenticated client
+      # could mint an admin session via POST /api/session. Change to
+      # "0.0.0.0:${PORT:-8787}:8787" only behind an authenticating proxy.
+      - "127.0.0.1:${PORT:-8787}:8787"
+    environment:
+      NODE_ENV: production
+      # AI-функции включаются только при непустом ключе; иначе эндпоинты отдают 503.
+      OPENROUTER_API_KEY: "${OPENROUTER_API_KEY:-}"
+      OPENROUTER_MODEL: "${OPENROUTER_MODEL:-}"
+      OPENROUTER_IMAGE_MODEL: "${OPENROUTER_IMAGE_MODEL:-}"
+      OPENROUTER_CHAT_MODEL: "${OPENROUTER_CHAT_MODEL:-}"
+      OPENROUTER_APP_URL: "${OPENROUTER_APP_URL:-}"
+      OPENROUTER_TITLE: "${OPENROUTER_TITLE:-Confi}"
+      HTTPS_PROXY: "${HTTPS_PROXY:-}"
+      HTTP_PROXY: "${HTTP_PROXY:-}"
+    volumes:
+      # БД вынесена в /data, чтобы том не перекрывал schema.sql/migrate.ts из образа.
+      - confi-db:/data
+      - confi-uploads:/app/uploads
+
+volumes:
+  confi-db:
+  confi-uploads:

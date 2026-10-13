@@ -1,0 +1,41 @@
+# Confi — публикация прототипа (Node + SQLite) на Render.
+# Blueprint: https://render.com/docs/blueprint-spec
+#
+# Что делает: собирает клиент (Vite → dist/), затем поднимает Express API.
+# В production-режиме сервер сам раздаёт собранный SPA из `dist/` (см.
+# src/server/index.ts, блок "Static SPA"), поэтому один сервис отдаёт и
+# фронтенд, и API на одном origin.
+#
+# SQLite-файл (`db/confi.db`) и загрузки (`uploads/`) требуют постоянного
+# диска — он смонтирован ниже. На бесплатном плане диск недоступен: для демо
+# без диска данные пересоздаются при рестарте (seed идемпотентен).
+services:
+  - type: web
+    name: confi
+    runtime: node
+    plan: starter
+    buildCommand: npm ci && npm run build && npm run db:init && npm run db:seed
+    startCommand: npm run server
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: "24"
+      - key: NODE_ENV
+        value: production
+      # AI-функции включаются только при заданном ключе (иначе 503).
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: OPENROUTER_MODEL
+        sync: false
+      - key: OPENROUTER_IMAGE_MODEL
+        sync: false
+      - key: OPENROUTER_CHAT_MODEL
+        sync: false
+      - key: OPENROUTER_APP_URL
+        sync: false
+      - key: OPENROUTER_TITLE
+        value: Confi
+    disk:
+      name: confi-data
+      mountPath: /opt/render/project/src/db
+      sizeGB: 1

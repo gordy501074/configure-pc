@@ -12,9 +12,9 @@ import { components, readyPcs, seededReviews } from "../src/data/mock.ts";
 import { migratePriceLists, migrateSellerBrandDescription, migrateUserAccount, migrateVendorAndAvailability, migrateConfigReadyLink, migrateOrderAttributionAndCancel, migrateOrderRejectedStatus, migrateOrderPaymentMethod, migratePartDescription } from "./migrate.ts";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const DB_PATH = join(root, "db", "confi.db");
+const DB_PATH = process.env.DB_PATH?.trim() || join(root, "db", "confi.db");
 const SCHEMA = join(root, "db", "schema.sql");
-const QUARANTINE = join(root, "db", "quarantine-part.log");
+const QUARANTINE = process.env.DB_QUARANTINE?.trim() || join(root, "db", "quarantine-part.log");
 
 mkdirSync(dirname(DB_PATH), { recursive: true });
 

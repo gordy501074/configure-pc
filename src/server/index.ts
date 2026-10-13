@@ -8,7 +8,7 @@ import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
-import { basename, dirname, extname, join } from "node:path";
+import { basename, dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createCatalogRepository, type CreatePartInput } from "./repository/catalog.ts";
 import { createUserRepository } from "./repository/user-data.ts";
@@ -40,7 +40,7 @@ app.use(cors());
 // Image uploads live in a repo-root `uploads/` dir (override for tests), served
 // read-only under /api/uploads/<file> so the Vite /api proxy covers it in dev.
 const serverRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
-const UPLOADS_DIR = process.env.UPLOADS_DIR ?? join(serverRoot, "uploads");
+const UPLOADS_DIR = process.env.UPLOADS_DIR?.trim() || join(serverRoot, "uploads");
 mkdirSync(UPLOADS_DIR, { recursive: true });
 // Base64 of a 5 MB image is ~6.7 MB, so this route needs a larger body limit.
 // It is mounted before the global parser (which then skips the already-parsed
@@ -1921,7 +1921,36 @@ app.post("/api/analytics", (req, res) => {
   res.json({ ok: true, stored });
 });
 
-const PORT = Number(process.env.PORT ?? 8787);
+// ---- Static SPA (production) ----
+// In production the built client lives in `dist/`. When present, serve it and
+// fall back to `index.html` for client-side routes. In dev (Vite on 5173) this
+// is a no-op, so the API-only workflow is unchanged.
+const DIST_DIR = resolve(serverRoot, process.env.DIST_DIR?.trim() || "dist");
+if (existsSync(join(DIST_DIR, "index.html"))) {
+  // Hashed assets are content-addressed, so they can be cached long. The HTML
+  // shell must always be revalidated: a cached shell referencing bundles deleted
+  // by a redeploy would 404 (see the /assets/ guard below) and break the app.
+  app.use(
+    express.static(DIST_DIR, {
+      maxAge: "1h",
+      setHeaders: (res, filePath) => {
+        if (filePath.endsWith("index.html")) {
+          res.setHeader("Cache-Control", "no-cache");
+        }
+      },
+    }),
+  );
+  app.get(/^\/(?!api(?:\/|$)).*/, (req, res) => {
+    // Missing built assets must 404 (not return index.html with 200), otherwise
+    // a stale HTML referencing a deleted hashed bundle would look "valid".
+    if (req.path.startsWith("/assets/")) return res.status(404).end();
+    res.setHeader("Cache-Control", "no-cache");
+    res.sendFile(join(DIST_DIR, "index.html"));
+  });
+}
+
+const parsedPort = Number.parseInt(process.env.PORT?.trim() || "", 10);
+const PORT = Number.isInteger(parsedPort) && parsedPort > 0 && parsedPort < 65536 ? parsedPort : 8787;
 app.listen(PORT, () => {
   // eslint-disable-next-line no-console
   console.log(`[confi] SQLite API on http://localhost:${PORT}`);

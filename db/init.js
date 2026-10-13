@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url";
 import { migratePriceLists, migrateSellerBrandDescription, migrateUserAccount, migrateVendorAndAvailability, migrateConfigReadyLink, migrateOrderAttributionAndCancel, migrateOrderRejectedStatus, migrateOrderPaymentMethod, migratePartDescription } from "./migrate.ts";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const DB_PATH = join(root, "db", "confi.db");
+const DB_PATH = process.env.DB_PATH?.trim() || join(root, "db", "confi.db");
 const SCHEMA = join(root, "db", "schema.sql");
 
 mkdirSync(dirname(DB_PATH), { recursive: true });

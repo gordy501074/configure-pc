@@ -14,8 +14,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const DB = join(root, "db", "confi.db");
-const BACKUP_DIR = join(root, "db", "backups");
+const DB = process.env.DB_PATH?.trim() || join(root, "db", "confi.db");
+const BACKUP_DIR = process.env.DB_BACKUP_DIR?.trim() || join(dirname(DB), "backups");
 
 mkdirSync(BACKUP_DIR, { recursive: true });
 

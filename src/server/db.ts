@@ -9,7 +9,7 @@ import { migratePriceLists, migrateSellerBrandDescription, migrateUserAccount, m
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 export const DB_PATH =
-  process.env.DB_PATH ?? join(root, "db", "confi.db");
+  process.env.DB_PATH?.trim() || join(root, "db", "confi.db");
 
 let cachedDb: Database.Database | null = null;
 
